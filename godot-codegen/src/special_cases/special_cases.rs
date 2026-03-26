@@ -1304,7 +1304,7 @@ pub fn is_enum_bitfield(class_name: Option<&TyName>, enum_name: &str) -> Option<
         | (Some("GPUParticles2D"), "EmitFlags")
         | (Some("GPUParticles3D"), "EmitFlags")
         | (Some("Node"), "DuplicateFlags")
-        | (Some("Object"), "ConnectFlags")
+        | (Some("Object"), "ConnectFlags") // Fixed in Godot 4.7 (https://github.com/godotengine/godot/pull/109892).
         | (Some("SceneTree"), "GroupCallFlags")
         | (Some("TextEdit"), "SearchFlags")
 

@@ -85,9 +85,9 @@ mod reexport_crate {
     pub(crate) use super::traits::{
         ExtVariantType, GodotFfiVariant, GodotNullableFfi, ffi_variant_type,
     };
+    pub(crate) use crate::impl_godot_as_self;
     // Private imports for this module only.
     pub(super) use crate::registry::method::MethodParamOrReturnInfo;
-    pub(crate) use crate::{declare_arg_method, impl_godot_as_self};
 }
 pub(crate) use reexport_crate::*;
 

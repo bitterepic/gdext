@@ -498,25 +498,6 @@ macro_rules! arg_into_owned {
     };
 }
 
-#[macro_export]
-macro_rules! declare_arg_method {
-    ($ ($docs:tt)+ ) => {
-        $( $docs )+
-        ///
-        /// # Generic bounds
-        /// The bounds are implementation-defined and may change at any time. Do not use this function in a generic context requiring `T`
-        /// -- use the `From` trait or [`AsArg`][crate::meta::AsArg] in that case.
-        pub fn arg<T>(&self) -> impl $crate::meta::AsArg<T> + use<T>
-        where
-            for<'a> T: From<&'a Self>
-                + $crate::meta::ToGodot
-                + 'a,
-        {
-            $crate::meta::CowArg::Owned(T::from(self))
-        }
-    };
-}
-
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // CowArg
 

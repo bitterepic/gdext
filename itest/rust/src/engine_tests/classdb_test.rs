@@ -8,6 +8,7 @@
 use godot::builtin::{Array, GString, VarDictionary, Variant, VariantType};
 use godot::classes::{ClassDb, RefCounted, Resource};
 use godot::global::Error;
+use godot::init::GdextBuild;
 use godot::meta::ToGodot as _;
 use godot::obj::{Gd, NewGd, Singleton};
 
@@ -152,7 +153,12 @@ pub fn check_classdb_full_api() {
         assert_eq!(db.class_get_method_argument_count("Object", "get"), 1);
 
         // ClassDB.is_class_enum_bitfield()
-        assert!(!db.is_class_enum_bitfield("Object", "ConnectFlags")); // Not a real bitfield.
+        // ConnectFlags became a real bitfield in Godot 4.7 (https://github.com/godotengine/godot/pull/109892).
+        if GdextBuild::since_api("4.7") {
+            assert!(db.is_class_enum_bitfield("Object", "ConnectFlags"));
+        } else {
+            assert!(!db.is_class_enum_bitfield("Object", "ConnectFlags"));
+        }
     }
 
     // Tests for Godot 4.4+ APIs.

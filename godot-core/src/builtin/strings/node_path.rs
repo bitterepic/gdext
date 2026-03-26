@@ -178,22 +178,6 @@ impl NodePath {
             .slice(begin, exclusive_end.unwrap_or(i32::MAX as i64))
     }
 
-    crate::meta::declare_arg_method! {
-        /// Use as argument for an [`impl AsArg<GString|StringName>`][crate::meta::AsArg] parameter.
-        ///
-        /// This is a convenient way to convert arguments of similar string types.
-        ///
-        /// # Example
-        /// [`PackedStringArray`][crate::builtin::PackedStringArray] can insert elements using `AsArg<GString>`, so let's pass a `NodePath`:
-        /// ```no_run
-        /// # use godot::prelude::*;
-        /// let node_path = NodePath::from("Node2D/Label");
-        ///
-        /// let mut array = PackedStringArray::new();
-        /// array.push(node_path.arg());
-        /// ```
-    }
-
     #[doc(hidden)]
     pub fn as_inner(&self) -> inner::InnerNodePath<'_> {
         inner::InnerNodePath::from_outer(self)
