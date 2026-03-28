@@ -42,7 +42,7 @@ jobs:
   rustfmt:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: "Install Rust"
         uses: ./.github/composite/rust
@@ -69,7 +69,7 @@ jobs:
   doc-lints:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # rustdoc is included as component.
       - name: "Install Rust"
@@ -86,7 +86,7 @@ jobs:
   clippy:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: "Patch Cargo.toml to use nightly extension API"
         run: .github/other/patch-prebuilt.sh nightly
@@ -113,7 +113,7 @@ jobs:
     name: unit-test
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: "Patch Cargo.toml to use nightly extension API"
         run: .github/other/patch-prebuilt.sh nightly
@@ -144,7 +144,7 @@ jobs:
             command: test-web-nt
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: "Patch Cargo.toml to use nightly extension API"
         run: .github/other/patch-prebuilt.sh nightly
@@ -294,7 +294,7 @@ jobs:
             rust-target: x86_64-unknown-linux-gnu
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: "Run Godot integration test"
         uses: ./.github/composite/godot-itest
@@ -323,10 +323,10 @@ jobs:
   license-guard:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: "Check and fix license headers"
-        uses: 'apache/skywalking-eyes/header@v0.6.0'
+        uses: 'apache/skywalking-eyes/header@v0.8.0'
         with:
           # log: debug # optional: set the log level. The default value is `info`.
           config: .github/other/licenserc.yml

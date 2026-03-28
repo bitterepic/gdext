@@ -42,7 +42,7 @@ jobs:
   rustfmt:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: "Install Rust"
         uses: ./.github/composite/rust
@@ -69,7 +69,7 @@ jobs:
   doc-lints:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: "Patch Cargo.toml to use nightly extension API"
         run: .github/other/patch-prebuilt.sh nightly
@@ -89,7 +89,7 @@ jobs:
   clippy:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: "Patch Cargo.toml to use nightly extension API"
         run: .github/other/patch-prebuilt.sh nightly
@@ -146,7 +146,7 @@ jobs:
             rust-special: -msrv
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: "Patch Cargo.toml to use nightly extension API"
         # Only on Linux because godot4-prebuilt/nightly branch doesn't have artifacts for other platforms.
@@ -185,7 +185,7 @@ jobs:
             command: test-web-nt
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: "Patch Cargo.toml to use nightly extension API"
         run: .github/other/patch-prebuilt.sh nightly
@@ -214,7 +214,7 @@ jobs:
     name: miri-test
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: "Install Rust"
         uses: ./.github/composite/rust
@@ -238,7 +238,7 @@ jobs:
     name: proptest
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: "Install Rust"
         uses: ./.github/composite/rust
@@ -455,7 +455,7 @@ jobs:
             rust-target: x86_64-unknown-linux-gnu
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: "Run Godot integration test"
         uses: ./.github/composite/godot-itest
@@ -486,7 +486,7 @@ jobs:
   cargo-deny-machete:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Deny
       # Note: manually downloading is ~30s faster than https://github.com/EmbarkStudios/cargo-deny-action
@@ -511,10 +511,10 @@ jobs:
   license-guard:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: "Check license headers"
-        uses: "apache/skywalking-eyes/header@v0.6.0"
+        uses: "apache/skywalking-eyes/header@v0.8.0"
         with:
           # log: debug # optional: set the log level. The default value is `info`.
           config: .github/other/licenserc.yml

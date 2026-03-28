@@ -51,7 +51,7 @@ jobs:
     outputs:
       PUBLISHED_CRATE_VERSION: ${{ steps.parse-crate-version.outputs.PUBLISHED_CRATE_VERSION }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
 #      - name: "Parse crate version from Cargo.toml"
 #        id: parse-crate-version
@@ -115,7 +115,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: validation
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.ref }}
 
@@ -142,7 +142,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: validation
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.ref }}
 
@@ -163,7 +163,7 @@ jobs:
     env:
       PUBLISHED_CRATE_VERSION: ${{ needs.validation.outputs.PUBLISHED_CRATE_VERSION }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: 'trigger-v${{ needs.validation.outputs.PUBLISHED_CRATE_VERSION }}'
 
@@ -215,7 +215,7 @@ jobs:
       - validation # for outputs
       - docs-and-commit
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: 'v${{ needs.validation.outputs.PUBLISHED_CRATE_VERSION }}'
 
@@ -234,7 +234,7 @@ jobs:
       - docs-and-commit
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: 'v${{ needs.validation.outputs.PUBLISHED_CRATE_VERSION }}'
 
@@ -258,7 +258,7 @@ jobs:
     steps:
       # Note: we cannot dry-run the publishing, since crates depend on each other, and dry-run will fail if they aren't yet on crates.io.
       # Sleep to leave crates.io and docs.rs some time to index the dependencies, before releasing dependents.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: 'v${{ needs.validation.outputs.PUBLISHED_CRATE_VERSION }}'
 
