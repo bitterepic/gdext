@@ -18,18 +18,9 @@ use crate::util::{ident, make_load_safety_doc};
 pub fn generate_sys_interface_file(
     h_path: &Path,
     sys_gen_path: &Path,
-    is_godot_4_0: bool,
     submit_fn: &mut SubmitFn,
 ) {
-    let code = if is_godot_4_0 {
-        // Compat for 4.0.x
-        // Most polyfills are in godot_exe.rs, fn polyfill_legacy_header()
-        // Module `compat_4_0` is directly imported in Rust code, behind #[cfg].
-        TokenStream::new()
-    } else {
-        generate_proc_address_funcs(h_path)
-    };
-
+    let code = generate_proc_address_funcs(h_path);
     submit_fn(sys_gen_path.join("interface.rs"), code);
 }
 
