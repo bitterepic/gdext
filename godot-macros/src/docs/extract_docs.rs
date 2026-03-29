@@ -4,6 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
+
+// Doc generation overview:
+//
+// Only items with at least one `///` doc comment are emitted into the XML. Items without Rustdoc are still registered with Godot
+// via ClassDb API, so they appear in the editor (autocomplete, signal connection dialog, etc.), just without a description.
+
 use proc_macro2::{Ident, TokenStream};
 use quote::{ToTokens, quote};
 

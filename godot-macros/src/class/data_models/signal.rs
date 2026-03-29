@@ -229,7 +229,18 @@ pub fn make_signal_registrations(
             // max_visibility = max_visibility.max(details.vis_classified);
         }
 
-        let registration = make_signal_registration(&details, class_name_obj);
+        let mut registration = make_signal_registration(&details, class_name_obj);
+
+        // Warn if signal name starts with `_` but isn't declared as #[signal(internal)].
+        if !is_internal && details.godot_name_str.starts_with('_') {
+            let warning_fn = Ident::new("signal_underscore_prefix", fn_signature.name.span());
+
+            registration = quote! {
+                ::godot::__deprecated::emit_deprecated_warning!(#warning_fn);
+                #registration
+            };
+        }
+
         signal_registrations.push(registration);
     }
 

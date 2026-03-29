@@ -98,13 +98,6 @@ public class Player : Node2D
   </description>
 </signal>
 
-<signal name="_underscore_signal">
-  <param index="0" name="p" type="Vector2" />
-  <description>
-  Underscore signal docs.
-  </description>
-</signal>
-
 <signal name="deprecated" deprecated="– use other_signal instead.">
   <param index="0" name="x" type="i64" />
   <description>

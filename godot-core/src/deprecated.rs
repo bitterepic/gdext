@@ -45,11 +45,6 @@ pub use crate::emit_deprecated_warning;
 #[deprecated = "\nUse `key => value` syntax in `vdict!` macro.\nOld syntax `key: value` will be removed."]
 pub const fn vdict_colon_syntax() {}
 
-// ----------------------------------------------------------------------------------------------------------------------------------------------
-// Godot-side deprecations (we may mark them deprecated but keep support).
-
-// Past removals: `radians` in #[export(range)].
-
 // Virtual method renames (can be removed together with maybe_rename_deprecated_virtual() in godot-macros).
 #[deprecated = "\n\
     Virtual method `get_property` has been renamed to `on_get`.\n\
@@ -75,3 +70,14 @@ pub const fn virtual_method_get_property_list() {}
     Virtual method `property_get_revert` has been renamed to `on_property_get_revert`.\n\
     See https://github.com/godot-rust/gdext/pull/1527."]
 pub const fn virtual_method_property_get_revert() {}
+
+// ----------------------------------------------------------------------------------------------------------------------------------------------
+// Godot-side deprecations (we may mark them deprecated but keep support).
+
+// Past removals: `radians` in #[export(range)].
+
+#[deprecated = "\n\
+    Signal names starting with `_` are discouraged in Rust.\n\
+    Instead, use: `#[signal(internal)] fn my_signal();`\n\
+    This registers it as `_my_signal`, effectively hiding it in Godot."]
+pub const fn signal_underscore_prefix() {}
