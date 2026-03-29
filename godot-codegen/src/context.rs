@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use proc_macro2::{Ident, TokenStream};
 use quote::{ToTokens, format_ident};
+use regex::Regex;
 
 use crate::generator::method_tables::MethodTableKey;
 use crate::generator::notifications;
@@ -33,6 +34,7 @@ pub struct Context<'a> {
     notification_enum_names_by_class: HashMap<TyName, NotificationEnum>,
     method_table_indices: HashMap<MethodTableKey, usize>,
     method_table_next_index: HashMap<String, usize>,
+    import_regexes: ImportRegexes,
 }
 
 impl<'a> Context<'a> {
@@ -356,6 +358,10 @@ impl<'a> Context<'a> {
         let prev = self.cached_rust_types.insert(godot_ty, resolved);
         assert!(prev.is_none(), "no overwrites of RustTy");
     }
+
+    pub fn regexes(&self) -> &ImportRegexes {
+        &self.import_regexes
+    }
 }
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -447,5 +453,53 @@ impl InheritanceTree {
         }
 
         false
+    }
+}
+
+// ----------------------------------------------------------------------------------------------------------------------------------------------
+
+/// A collection of compiled regexes that are used when importing docs.
+pub struct ImportRegexes {
+    pub newlines: Regex,
+    pub bold_tags: Regex,
+    pub italic_tags: Regex,
+    pub code_tags: Regex,
+    // Keyboard shortcuts, e.g. "Ctrl + S".
+    pub kbd_tags: Regex,
+    pub url_tags: Regex,
+    pub codeblocks_tags: Regex,
+    pub codeblock_tags: Regex,
+    pub codeblock_lang_tags: Regex,
+    pub gdscript_tags: Regex,
+    pub csharp_tags: Regex,
+    pub type_links: Regex,
+    pub method_links: Regex,
+    pub unimplemented_links: Regex,
+}
+
+impl Default for ImportRegexes {
+    fn default() -> Self {
+        fn regex(s: &str) -> Regex {
+            Regex::new(s).unwrap()
+        }
+
+        Self {
+            newlines: regex(r#"(\[codeblocks?( lang=.*?)?\](?:.|\n)*?\[\/codeblocks?\])|(\n)"#),
+            bold_tags: regex(r#"\[b\](.*?)\[\/b\]"#),
+            italic_tags: regex(r#"\[i\](.*?)\[\/i\]"#),
+            code_tags: regex(r#"\[code( skip-lint)?\](.*?)\[\/code\]"#),
+            kbd_tags: regex(r#"\[kbd\](.*?)\[\/kbd\]"#),
+            url_tags: regex(r#"\[url=(.*?)\](.*?)\[\/url\]"#),
+            codeblocks_tags: regex(r#"\[codeblocks\]([\s\S]*?)\[\/codeblocks\]"#),
+            codeblock_tags: regex(r#"\[codeblock\]([\s\S]*?)\[\/codeblock\]"#),
+            codeblock_lang_tags: regex(r#"\[codeblock lang=(.*?)\]([\s\S]*?)\[\/codeblock\]"#),
+            gdscript_tags: regex(r#"\[gdscript\]([\s\S]*?)\[\/gdscript\]"#),
+            csharp_tags: regex(r#"\[csharp\]([\s\S]*?)\[\/csharp\]"#),
+            type_links: regex(r#"\[([a-zA-Z0-9@]+?)\]"#),
+            method_links: regex(r#"\[method ((([a-zA-Z0-9@]+?)\.)?([a-zA-Z0-9_]+?))\]"#),
+            unimplemented_links: regex(
+                r#"\[(annotation|constant|member|enum|param|constructor|signal)\s.*?\]"#,
+            ),
+        }
     }
 }

@@ -24,7 +24,7 @@ rust-version = "1.94"
 # regular dependencies. Sort alphabetically within each section; comments about a dependency come on the section header.
 [workspace.dependencies]
 # Related to godot-rust.
-gdextension-api = { version = "0.3.3", git = "https://github.com/godot-rust/godot4-prebuilt", branch = "release-v0.3" }
+gdextension-api = { version = "0.4.0", git = "https://github.com/godot-rust/godot4-prebuilt", branch = "release-v0.4" }
 
 # Main library features.
 glam = { version = "0.32", features = ["debug-glam-assert"] }
