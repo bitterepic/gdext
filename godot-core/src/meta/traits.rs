@@ -38,7 +38,7 @@ pub trait GodotFfiVariant: Sized + GodotFfi {
 // type. For instance [`i32`] does not implement `GodotFfi` because it cannot represent all values of
 // Godot's `int` type, however it does implement `GodotType` because we can set the meta-data of values with
 // this type to indicate that they are 32 bits large.
-pub trait GodotType: GodotConvert<Via = Self> + sealed::Sealed + Sized + 'static
+pub trait GodotType: GodotConvert<Via = Self> + Clone + sealed::Sealed + Sized + 'static
 // 'static is not technically required, but it simplifies a few things (limits e.g. `ObjectArg`).
 {
     // Value type for this type's FFI representation.

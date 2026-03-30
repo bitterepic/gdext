@@ -104,10 +104,7 @@ where
         shared_ref.to_godot()
     }
 
-    fn to_godot_owned(&self) -> Self::Via
-    where
-        Self::Via: Clone,
-    {
+    fn to_godot_owned(&self) -> Self::Via {
         // Default implementation calls underlying T::to_godot().clone(), which is wrong.
         // Some to_godot_owned() calls are specialized/overridden, we need to honor that.
 

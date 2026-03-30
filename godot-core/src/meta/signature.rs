@@ -63,7 +63,7 @@ impl<Params: ParamTuple, Ret: GodotConvert> Signature<Params, Ret> {
 impl<Params, Ret> Signature<Params, Ret>
 where
     Params: InParamTuple,
-    Ret: EngineToGodot<Via: Clone>,
+    Ret: EngineToGodot,
 {
     /// Receive a varcall from Godot, and return the value in `ret` as a variant pointer.
     ///
@@ -430,7 +430,7 @@ pub(crate) unsafe fn varcall_return_checked<R: ToGodot>(
 /// # Safety
 /// `ret_val`, `ret`, and `call_type` must follow the safety requirements as laid out in
 /// [`GodotFuncMarshal::try_return`](sys::GodotFuncMarshal::try_return).
-unsafe fn ptrcall_return<R: EngineToGodot<Via: Clone>>(
+unsafe fn ptrcall_return<R: EngineToGodot>(
     ret_val: R,
     ret: sys::GDExtensionTypePtr,
     _call_ctx: &CallContext,

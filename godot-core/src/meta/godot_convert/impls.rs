@@ -88,8 +88,6 @@ impl<T> ToGodot for Option<T>
 where
     // Currently limited to holding objects -> needed to establish to_godot() relation T::to_godot() = Option<&T::Via>.
     T: ToGodot<Pass = meta::ByObject>,
-    // Extra Clone bound for to_godot_owned(); might be extracted in the future.
-    T::Via: Clone,
     // T::Via must be a Godot nullable type (to support the None case).
     for<'f> T::Via: GodotType<
             // Associated types need to be nullable.
@@ -105,10 +103,7 @@ where
         self.as_ref().map(T::to_godot)
     }
 
-    fn to_godot_owned(&self) -> Option<T::Via>
-    where
-        Self::Via: Clone,
-    {
+    fn to_godot_owned(&self) -> Option<T::Via> {
         self.as_ref().map(T::to_godot_owned)
     }
 

@@ -90,12 +90,7 @@ pub trait ToGodot: Sized + GodotConvert {
     /// Converts this type to owned Godot representation.
     ///
     /// Always returns `Self::Via`, cloning if necessary for ByRef types.
-    // Future: could potentially split into separate ToGodotOwned trait, which has a blanket impl for T: Clone, while requiring
-    // manual implementation for non-Clone types. This would remove the Via: Clone bound, which can be restrictive.
-    fn to_godot_owned(&self) -> Self::Via
-    where
-        Self::Via: Clone,
-    {
+    fn to_godot_owned(&self) -> Self::Via {
         Self::Pass::ref_to_owned_via(self)
     }
 
@@ -177,10 +172,7 @@ pub trait EngineToGodot: Sized + GodotConvert {
     fn engine_to_godot(&self) -> ToArg<'_, Self::Via, Self::Pass>;
 
     /// Converts this type to owned Godot representation.
-    fn engine_to_godot_owned(&self) -> Self::Via
-    where
-        Self::Via: Clone,
-    {
+    fn engine_to_godot_owned(&self) -> Self::Via {
         Self::Pass::ref_to_owned_via(self)
     }
 
@@ -195,10 +187,7 @@ impl<T: ToGodot> EngineToGodot for T {
         <T as ToGodot>::to_godot(self)
     }
 
-    fn engine_to_godot_owned(&self) -> Self::Via
-    where
-        Self::Via: Clone,
-    {
+    fn engine_to_godot_owned(&self) -> Self::Via {
         <T as ToGodot>::to_godot_owned(self)
     }
 

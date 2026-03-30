@@ -81,7 +81,6 @@ pub trait SimpleVar: ToGodot + FromGodot + Clone {}
 impl<T> Var for T
 where
     T: SimpleVar,
-    T::Via: Clone,
 {
     type PubType = Self;
 

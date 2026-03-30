@@ -1166,10 +1166,7 @@ impl<T: Element> ToGodot for Array<T> {
         self
     }
 
-    fn to_godot_owned(&self) -> Self::Via
-    where
-        Self::Via: Clone,
-    {
+    fn to_godot_owned(&self) -> Self::Via {
         // Overridden, because default clone() validates that before/after element types are equal, which doesn't matter when we pass to FFI.
         // This may however be an issue if to_godot_owned() is used by the user directly.
         unsafe { self.clone_unchecked() }

@@ -561,8 +561,7 @@ pub trait ArgPassing: Sealed {
     #[doc(hidden)]
     fn ref_to_owned_via<T>(value: &T) -> T::Via
     where
-        T: EngineToGodot<Pass = Self>,
-        T::Via: Clone;
+        T: EngineToGodot<Pass = Self>;
 
     /// Convert to FFI repr in the most efficient way (move or borrow).
     #[doc(hidden)]
@@ -598,7 +597,6 @@ impl ArgPassing for ByValue {
     fn ref_to_owned_via<T>(value: &T) -> T::Via
     where
         T: EngineToGodot<Pass = Self>,
-        T::Via: Clone,
     {
         value.engine_to_godot()
     }
@@ -629,7 +627,6 @@ impl ArgPassing for ByRef {
     fn ref_to_owned_via<T>(value: &T) -> T::Via
     where
         T: EngineToGodot<Pass = Self>,
-        T::Via: Clone,
     {
         // For ByRef types, clone the reference to get owned value.
         value.engine_to_godot().clone()
@@ -664,7 +661,6 @@ impl ArgPassing for ByVariant {
     fn ref_to_owned_via<T>(value: &T) -> T::Via
     where
         T: EngineToGodot<Pass = Self>,
-        T::Via: Clone,
     {
         value.engine_to_godot().clone()
     }
@@ -696,7 +692,6 @@ impl ArgPassing for ByObject {
     fn ref_to_owned_via<T>(value: &T) -> T::Via
     where
         T: EngineToGodot<Pass = Self>,
-        T::Via: Clone,
     {
         // For ByObject types, do like ByRef: clone the reference to get owned value.
         value.engine_to_godot().clone()
@@ -745,7 +740,6 @@ where
     fn ref_to_owned_via<T>(value: &T) -> T::Via
     where
         T: EngineToGodot<Pass = Self>,
-        T::Via: Clone,
     {
         value.engine_to_godot_owned()
     }

@@ -135,7 +135,7 @@ macro_rules! unsafe_impl_param_tuple {
             }
         }
 
-        impl<$($P),*> OutParamTuple for ($($P,)*) where $($P: EngineToGodot<Via: Clone> + fmt::Debug,)* {
+        impl<$($P),*> OutParamTuple for ($($P,)*) where $($P: EngineToGodot + fmt::Debug,)* {
             fn with_variants<F, R>(self, f: F) -> R
             where
                 F: FnOnce(&[Variant]) -> R,
