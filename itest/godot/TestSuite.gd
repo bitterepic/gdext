@@ -102,6 +102,9 @@ func expect_fail() -> void:
 func assert_fail(message: String = "") -> bool:
 	_assertion_failed = true
 
+	# Re-enable error messages in case expect_fail() suppressed them.
+	Engine.print_error_messages = true
+
 	print_newline()
 	if message:
 		print_error("Test execution should have failed: %s" % [message])
