@@ -21,6 +21,9 @@ func reset_state() -> void:
 func is_test_failed() -> bool:
 	return _assertion_failed
 
+func run_test(suite: RefCounted, method_name: String) -> GDScriptTestRunner.GDScriptTestCase:
+	return GDScriptTestRunner.GDScriptExecutableTestCase.new(suite, method_name)
+
 # -----------------------------------------------------------------------------------------------------------------------------------------------
 # Protected API, called by individual test .gd files.
 

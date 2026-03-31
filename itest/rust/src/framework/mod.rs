@@ -32,18 +32,18 @@ sys::plugin_registry!(pub(crate) __GODOT_BENCH: RustBenchmark);
 fn collect_rust_tests(filters: &[String]) -> (Vec<RustTestCase>, HashSet<&str>, bool) {
     let mut all_files = HashSet::new();
     let mut tests: Vec<RustTestCase> = vec![];
-    let mut is_focus_run = false;
+    let mut is_focused_run = false;
 
     sys::plugin_foreach!(__GODOT_ITEST; |test: &RustTestCase| {
         // First time a focused test is encountered, switch to "focused" mode and throw everything away.
-        if !is_focus_run && test.focused {
+        if !is_focused_run && test.focused {
             tests.clear();
             all_files.clear();
-            is_focus_run = true;
+            is_focused_run = true;
         }
 
         // Only collect tests if normal mode, or focus mode and test is focused.
-        if (!is_focus_run || test.focused) && passes_filter(filters, test.name) {
+        if (!is_focused_run || test.focused) && passes_filter(filters, test.name) {
             all_files.insert(test.file);
             tests.push(*test);
         }
@@ -52,28 +52,28 @@ fn collect_rust_tests(filters: &[String]) -> (Vec<RustTestCase>, HashSet<&str>, 
     // Sort alphabetically for deterministic run order
     tests.sort_by_key(|test| test.file);
 
-    (tests, all_files, is_focus_run)
+    (tests, all_files, is_focused_run)
 }
 
 /// Finds all `#[itest(async)]` tests.
 fn collect_async_rust_tests(
     filters: &[String],
-    sync_focus_run: bool,
+    sync_focused_run: bool,
 ) -> (Vec<AsyncRustTestCase>, HashSet<&str>, bool) {
     let mut all_files = HashSet::new();
     let mut tests = vec![];
-    let mut is_focus_run = sync_focus_run;
+    let mut is_focused_run = sync_focused_run;
 
     sys::plugin_foreach!(__GODOT_ASYNC_ITEST; |test: &AsyncRustTestCase| {
         // First time a focused test is encountered, switch to "focused" mode and throw everything away.
-        if !is_focus_run && test.focused {
+        if !is_focused_run && test.focused {
             tests.clear();
             all_files.clear();
-            is_focus_run = true;
+            is_focused_run = true;
         }
 
         // Only collect tests if normal mode, or focus mode and test is focused.
-        if (!is_focus_run || test.focused) && passes_filter(filters, test.name) {
+        if (!is_focused_run || test.focused) && passes_filter(filters, test.name) {
             all_files.insert(test.file);
             tests.push(*test);
         }
@@ -82,7 +82,7 @@ fn collect_async_rust_tests(
     // Sort alphabetically for deterministic run order
     tests.sort_by_key(|test| test.file);
 
-    (tests, all_files, is_focus_run)
+    (tests, all_files, is_focused_run)
 }
 
 /// Finds all `#[bench]` benchmarks.

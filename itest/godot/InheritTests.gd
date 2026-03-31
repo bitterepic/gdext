@@ -14,6 +14,9 @@ func reset_state():
 func is_test_failed() -> bool:
 	return test_suite.is_test_failed()
 
+func run_test(suite: RefCounted, method_name: String) -> GDScriptTestRunner.GDScriptTestCase:
+	return test_suite.run_test(suite, method_name)
+
 # In order to reproduce the behavior discovered in https://github.com/godot-rust/gdext/issues/138
 # we must inherit a Godot Node. Because of this we can't just inherit TesSuite like the rest of the tests.
 func assert_that(what: bool, message: String = "") -> bool:

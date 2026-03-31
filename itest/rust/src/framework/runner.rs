@@ -30,7 +30,7 @@ struct TestStats {
 #[class(init)]
 pub struct IntegrationTests {
     stats: TestStats,
-    focus_run: bool,
+    focused_run: bool,
 }
 
 #[godot_api]
@@ -43,6 +43,7 @@ impl IntegrationTests {
         gdscript_tests: VarArray,
         gdscript_file_count: i64,
         allow_focus: bool,
+        gdscript_focused: bool,
         scene_tree: Gd<Node>,
         filters: VarArray,
         property_tests: Gd<Node>,
@@ -60,16 +61,31 @@ impl IntegrationTests {
 
         let rust_test_cases = collect_rust_tests(&filters);
 
-        // Print based on focus/not focus.
-        self.focus_run = rust_test_cases.focus_run;
-        if rust_test_cases.focus_run {
-            println!("  {FMT_CYAN}Focused run{FMT_END} -- execute only selected Rust tests.")
+        let rust_focused = rust_test_cases.focused_run;
+        let focused = rust_focused || gdscript_focused;
+        self.focused_run = focused;
+
+        // If the other side is focused (and this side is not), skip this side entirely.
+        let run_rust = !gdscript_focused || rust_focused;
+        let run_gdscript = !rust_focused || gdscript_focused;
+
+        // Print focus/count header.
+        let focus_which = match (rust_focused, gdscript_focused) {
+            (false, false) => None,
+            (true, false) => Some("Rust"),
+            (false, true) => Some("GDScript"),
+            (true, true) => Some("Rust and GDScript"),
+        };
+        if let Some(which) = focus_which {
+            println!("  {FMT_CYAN}Focused run{FMT_END} -- execute only selected {which} tests.");
         }
-        println!(
-            "  Rust: found {} tests in {} files.",
-            rust_test_cases.rust_test_count, rust_test_cases.rust_file_count
-        );
-        if !rust_test_cases.focus_run {
+        if run_rust {
+            println!(
+                "  Rust: found {} tests in {} files.",
+                rust_test_cases.rust_test_count, rust_test_cases.rust_file_count
+            );
+        }
+        if run_gdscript {
             println!(
                 "  GDScript: found {} tests in {} files.",
                 gdscript_tests.len(),
@@ -77,15 +93,17 @@ impl IntegrationTests {
             );
         }
 
+        let (rust_tests, async_rust_tests) = if run_rust {
+            (rust_test_cases.rust_tests, rust_test_cases.async_rust_tests)
+        } else {
+            (vec![], vec![])
+        };
+
         let clock = Instant::now();
-        self.run_rust_tests(
-            rust_test_cases.rust_tests,
-            scene_tree.clone(),
-            property_tests.clone(),
-        );
+        self.run_rust_tests(rust_tests, scene_tree.clone(), property_tests.clone());
         let rust_time = clock.elapsed();
 
-        let gdscript_time = if !rust_test_cases.focus_run {
+        let gdscript_time = if run_gdscript {
             let extra_duration = self.run_gdscript_tests(gdscript_tests);
             Some((clock.elapsed() - rust_time, extra_duration))
         } else {
@@ -109,6 +127,7 @@ impl IntegrationTests {
                     &stats,
                     rust_time + rust_async_time,
                     gdscript_time.map(|(elapsed, extra)| elapsed + extra),
+                    focused,
                     allow_focus,
                 );
 
@@ -118,7 +137,7 @@ impl IntegrationTests {
 
             Self::run_async_rust_tests(
                 stats,
-                rust_test_cases.async_rust_tests,
+                async_rust_tests,
                 scene_tree,
                 property_tests,
                 on_finalize_test,
@@ -135,7 +154,7 @@ impl IntegrationTests {
     #[allow(clippy::uninlined_format_args)]
     #[func]
     fn run_all_benchmarks(&mut self, scene_tree: Gd<Node>) {
-        if self.focus_run {
+        if self.focused_run {
             println!("  Benchmarks skipped (focused run).");
             return;
         }
@@ -303,6 +322,7 @@ impl IntegrationTests {
         stats: &TestStats,
         rust_time: Duration,
         gdscript_time: Option<Duration>,
+        focused_run: bool,
         allow_focus: bool,
     ) -> bool {
         let TestStats {
@@ -320,7 +340,6 @@ impl IntegrationTests {
 
         let rust_time = rust_time.as_secs_f32();
         let gdscript_time = gdscript_time.map(|t| t.as_secs_f32());
-        let focused_run = gdscript_time.is_none();
 
         let extra = if *skipped > 0 {
             format!(", {skipped} skipped")
@@ -583,16 +602,16 @@ struct RustTestCases {
     async_rust_tests: Vec<AsyncRustTestCase>,
     rust_test_count: usize,
     rust_file_count: usize,
-    focus_run: bool,
+    focused_run: bool,
 }
 
 fn collect_rust_tests(filters: &[String]) -> RustTestCases {
-    let (mut rust_tests, mut rust_files, focus_run) = super::collect_rust_tests(filters);
+    let (mut rust_tests, mut rust_files, focused_run) = super::collect_rust_tests(filters);
 
-    let (async_rust_tests, async_rust_files, async_focus_run) =
-        super::collect_async_rust_tests(filters, focus_run);
+    let (async_rust_tests, async_rust_files, async_focused_run) =
+        super::collect_async_rust_tests(filters, focused_run);
 
-    if !focus_run && async_focus_run {
+    if !focused_run && async_focused_run {
         rust_tests.clear();
         rust_files.clear();
     }
@@ -605,7 +624,7 @@ fn collect_rust_tests(filters: &[String]) -> RustTestCases {
         async_rust_tests,
         rust_test_count,
         rust_file_count,
-        focus_run: focus_run || async_focus_run,
+        focused_run: focused_run || async_focused_run,
     }
 }
 

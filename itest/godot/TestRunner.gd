@@ -46,24 +46,18 @@ func _ready():
 		load("res://gen/GenFfiTests.gd").new(),
 		load("res://InheritTests.gd").new(),
 		load("res://ScriptInstanceTests.gd").new(),
-	]
-	
-	var gdscript_tests: Array = []
-	for suite in gdscript_suites:
-		for method in suite.get_method_list():
-			var method_name: String = method.name
-			if method_name.begins_with("test_"):
-				gdscript_tests.push_back(GDScriptExecutableTestCase.new(suite, method_name))
-
-	var special_case_test_suites: Array = [
 		load("res://SpecialTests.gd").new(),
 	]
 
-	for suite in special_case_test_suites:
+	var gdscript_focused_run := _has_focused_tests(gdscript_suites)
+	var prefix := "focus_test_" if gdscript_focused_run else "test_"
+
+	var gdscript_tests: Array = []
+	for suite in gdscript_suites:
 		for method in suite.get_method_list():
-			var method_name: String = method.name
-			if method_name.begins_with("test_"):
-				gdscript_tests.push_back(await suite.run_test(suite, method_name))
+			if method.name.begins_with(prefix):
+				# Always use `await` -- it does nothing on synchronous run_test() methods.
+				gdscript_tests.push_back(await suite.run_test(suite, method.name))
 
 	var property_tests = load("res://gen/GenPropertyTests.gd").new()
 
@@ -79,12 +73,20 @@ func _ready():
 		gdscript_tests,
 		gdscript_suites.size(),
 		allow_focus,
+		gdscript_focused_run,
 		self,
 		filters,
 		property_tests,
 		run_benchmarks
 	)
 
+
+func _has_focused_tests(suites: Array) -> bool:
+	for suite in suites:
+		for method in suite.get_method_list():
+			if method.name.begins_with("focus_test_"):
+				return true
+	return false
 
 
 class GDScriptTestCase:
