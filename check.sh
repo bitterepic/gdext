@@ -213,7 +213,8 @@ function cmd_itest() {
       exit 2
     })
 
-    local exitCode=$?
+    # PIPESTATUS[0] is Godot's exit code; $? would only give tee's exit code (masking crashes).
+    local exitCode=${PIPESTATUS[0]}
 
     # Check for unrecoverable errors in log.
     if grep -qE "SCRIPT ERROR:|Can't open dynamic library" "$logFile"; then
