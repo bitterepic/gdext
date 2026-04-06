@@ -14,7 +14,7 @@ pub use super::global::{
     godot_error, godot_print, godot_print_rich, godot_script_error, godot_warn,
 };
 pub use super::init::{ExtensionLibrary, InitLevel, InitStage, gdextension};
-pub use super::meta::error::ConvertError;
+pub use super::meta::error::{ConvertError, func_bail, strat};
 pub use super::meta::{FromGodot, GodotConvert, ToGodot};
 pub use super::obj::{
     AsDyn, Base, DynGd, DynGdMut, DynGdRef, Gd, GdMut, GdRef, GodotClass, Inherits, InstanceId,

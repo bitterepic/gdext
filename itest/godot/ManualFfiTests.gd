@@ -624,3 +624,111 @@ func test_marshalling_continues_on_panic():
 
 	assert_eq(result, Vector3.ZERO, "Default value returned on failed function call")
 	mark_test_succeeded()
+
+# Verifies the ok path for varcall (untyped Variant) and Object.call() reflection.
+# Both go through varcall, so the return value should be the actual result.
+func test_strat_unexpected_ok_varcall():
+	var obj: Variant = FuncResulter.new()
+	assert_eq(obj.ok_int(), 42, "varcall ok path returns value")
+	assert_eq(obj.call("ok_int"), 42, "Object.call() ok path returns value")
+
+# Verifies the ok path for ptrcall (typed variable).
+func test_strat_unexpected_ok_ptrcall():
+	var obj: FuncResulter = FuncResulter.new()
+	var result: int = obj.ok_int()
+	assert_eq(result, 42, "ptrcall ok path returns value")
+
+# Verifies varcall error path: untyped Variant forces varcall, which aborts the calling GDScript
+# function in debug builds. In release builds, the error code is ignored and execution continues.
+func test_strat_unexpected_err_varcall():
+	var obj: Variant = FuncResulter.new()
+
+	if runs_release():
+		# In release builds, Godot ignores the GDExtension call-error code, so the calling function
+		# is NOT aborted. Execution continues and the return value is default (ret was never written).
+		var result = obj.err_bail()
+		assert_eq(result, null, "Release varcall: error returns null (ret unwritten)")
+	else:
+		expect_fail()
+		var _i = obj.err_bail()
+		assert_fail("err_bail() via varcall should abort calling function in debug")
+
+# Verifies ptrcall error path: typed object forces ptrcall, which has no r_error output parameter.
+# The error is logged but execution always continues with a default return value.
+func test_strat_unexpected_err_ptrcall():
+	mark_test_pending()
+
+	var obj: FuncResulter = FuncResulter.new()
+
+	Engine.print_error_messages = false
+	var result: int = obj.err_bail()
+	Engine.print_error_messages = true
+
+	assert_eq(result, 0, "ptrcall returns default value (0) on error")
+	mark_test_succeeded()
+
+# Verifies Object.call() error path: reflection always uses varcall regardless of obj's static type.
+# Behavior matches untyped Variant varcall.
+func test_strat_unexpected_err_reflection():
+	var obj: FuncResulter = FuncResulter.new()
+
+	if runs_release():
+		var result = obj.call("err_bail")
+		assert_eq(result, null, "Release Object.call(): error returns null (ret unwritten)")
+	else:
+		expect_fail()
+		var _i = obj.call("err_bail")
+		assert_fail("err_bail() via Object.call() should abort calling function in debug")
+
+# Verifies that a Result<(), Error> does NOT abort the calling function in either calling convention.
+# The error enum value is returned directly; execution continues normally.
+func test_strat_error_enum():
+	# Varcall path (untyped Variant).
+	var obj_v: Variant = FuncResulter.new()
+	assert_eq(obj_v.error_ok(), 0, "varcall: error_ok() should return Error.OK (0)")
+	assert_eq(obj_v.error_failed(), 1, "varcall: error_failed() should return Error.FAILED (1)")
+
+	# Ptrcall path (typed variable).
+	var obj_p: FuncResulter = FuncResulter.new()
+	var ok_result: int = obj_p.error_ok()
+	assert_eq(ok_result, 0, "ptrcall: error_ok() should return Error.OK (0)")
+	var err_result: int = obj_p.error_failed()
+	assert_eq(err_result, 1, "ptrcall: error_failed() should return Error.FAILED (1)")
+
+# Verifies that the object remains usable after an Err(Unexpected) via ptrcall.
+# Ptrcall does not abort the calling function, so we can verify recovery inline.
+func test_strat_unexpected_err_recovery_ptrcall():
+	mark_test_pending()
+
+	var obj: FuncResulter = FuncResulter.new()
+
+	# Trigger Unexpected error via ptrcall (does not abort *this* function, just logs error).
+	Engine.print_error_messages = false
+	var _fail: int = obj.err_bail()
+	Engine.print_error_messages = true
+
+	# Call a succeeding method -- the object should still work.
+	var result: int = obj.ok_int()
+	assert_eq(result, 42, "object should remain usable after error in previous ptrcall")
+	mark_test_succeeded()
+
+# Verifies that the object remains usable after an Err(Unexpected) via varcall.
+# Varcall aborts the calling function in debug, so recovery must be checked from a separate call.
+func test_strat_unexpected_err_recovery_varcall():
+	var obj: Variant = FuncResulter.new()
+
+	# Trigger the error. In debug, this aborts *_trigger_varcall_error*, not *this* function.
+	_trigger_varcall_error(obj)
+
+	# The object should still be usable after the failed call.
+	var result = obj.ok_int()
+	assert_eq(result, 42, "object should remain usable after error in previous varcall")
+
+# Helper: triggers an Unexpected error via varcall in a separate function scope,
+# so the abort (in debug builds) doesn't affect the caller's control flow.
+func _trigger_varcall_error(obj: Variant) -> void:
+	Engine.print_error_messages = false
+	var _i = obj.err_bail()
+	# In debug builds, this function is aborted here by the GDScript VM.
+	# In release builds, execution continues (error code ignored).
+	Engine.print_error_messages = true

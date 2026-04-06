@@ -21,9 +21,10 @@ use crate::meta::{
 };
 use crate::obj::{GodotClass, ValidatedObject};
 
-/// Checks for `#[func]` expansions that all parameters implement `FromGodot` and the return type implements `ToGodot`.
+/// Checks for `#[func]` expansions that all parameters implement `FromGodot` and the return type implements `ToGodot`
+/// (or `Result<T: ToGodot, E: ErrorToGodot>`).
 ///
-/// [`Signature`] itself only requires `EngineFromGodot` and `EngineToGodot`.
+/// [`Signature`] itself only requires `EngineFromGodot` and `EngineToGodot` for out-calls.
 #[inline(always)]
 #[doc(hidden)]
 pub fn ensure_func_bounds<Params: TupleFromGodot, Ret: ToGodot>() {}
@@ -94,7 +95,7 @@ where
 
         let rust_result = unsafe { func(instance_ptr, args) };
         // SAFETY: TODO.
-        unsafe { varcall_return::<Ret>(rust_result, ret, err) };
+        unsafe { varcall_return::<Ret>(rust_result, ret, err, call_ctx)? };
         Ok(())
     }
 
@@ -123,7 +124,7 @@ where
         // SAFETY:
         // `ret` is always a pointer to an initialized value of type $R
         // TODO: double-check the above
-        unsafe { ptrcall_return::<Ret>(func(instance_ptr, args), ret, call_ctx, call_type) };
+        unsafe { ptrcall_return::<Ret>(func(instance_ptr, args), ret, call_ctx, call_type)? };
 
         Ok(())
     }
@@ -390,6 +391,8 @@ impl<Params: OutParamTuple, Ret: EngineFromGodot> Signature<Params, Ret> {
 
 /// Moves `ret_val` into `ret`.
 ///
+/// Uses [`ToGodot::__godot_try_into_variant`] (via [`EngineToGodot`]) to support `Result<T, E>` without panicking.
+///
 /// # Safety
 /// - `ret` must be a pointer to an initialized `Variant`.
 /// - It must be safe to write a `Variant` once to `ret`.
@@ -398,12 +401,16 @@ unsafe fn varcall_return<R: EngineToGodot>(
     ret_val: R,
     ret: sys::GDExtensionVariantPtr,
     err: *mut sys::GDExtensionCallError,
-) {
+    call_ctx: &CallContext,
+) -> CallResult<()> {
+    let ret_variant = ret_val.engine_try_into_variant(call_ctx)?;
+
     unsafe {
-        let ret_variant = ret_val.engine_to_variant();
         *(ret as *mut Variant) = ret_variant;
         (*err).error = sys::GDEXTENSION_CALL_OK;
     }
+
+    Ok(())
 }
 
 /// Moves `ret_val` into `ret`, if it is `Ok(...)`. Otherwise sets an error.
@@ -414,18 +421,26 @@ pub(crate) unsafe fn varcall_return_checked<R: ToGodot>(
     ret_val: Result<R, ()>, // TODO Err should be custom CallError enum
     ret: sys::GDExtensionVariantPtr,
     err: *mut sys::GDExtensionCallError,
-) {
-    unsafe {
-        if let Ok(ret_val) = ret_val {
-            varcall_return(ret_val, ret, err);
-        } else {
+    call_ctx: &CallContext,
+) -> CallResult<()> {
+    if let Ok(ret_val) = ret_val {
+        unsafe { varcall_return(ret_val, ret, err, call_ctx)? };
+    } else {
+        unsafe {
             *err = sys::default_call_error();
             (*err).error = sys::GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
         }
     }
+    Ok(())
 }
 
 /// Moves `ret_val` into `ret`.
+///
+/// Uses [`ToGodot::__godot_try_into_godot_owned`] (via [`EngineToGodot`]) to check for unexpected (call-failing) `Result<T, E>` errors
+/// and produce the `Via` value in one consuming step. On error, returns `Err(CallError)` without writing to the return pointer.
+///
+/// Note that on the FFI level, ptrcalls have no `r_error` output parameter, so `Result<T, E>` resulting in failed calls (e.g. through
+/// `strat::Unexpected`) can't abort the calling GDScript function. Instead, this results in a Godot error print + default value.
 ///
 /// # Safety
 /// `ret_val`, `ret`, and `call_type` must follow the safety requirements as laid out in
@@ -433,16 +448,19 @@ pub(crate) unsafe fn varcall_return_checked<R: ToGodot>(
 unsafe fn ptrcall_return<R: EngineToGodot>(
     ret_val: R,
     ret: sys::GDExtensionTypePtr,
-    _call_ctx: &CallContext,
+    call_ctx: &CallContext,
     call_type: sys::PtrcallType,
-) {
-    unsafe {
-        // Needs a value (no ref) to be moved; can't use engine_to_godot() + to_ffi().
-        let val = ret_val.engine_to_godot_owned();
-        let ffi = val.into_ffi();
+) -> CallResult<()> {
+    // Consumes ret_val, checks for call-failing outcomes, and produces the Via value directly.
+    // For non-Result types this is a no-op (always Ok) equivalent to engine_to_godot_owned().
+    let val = ret_val.engine_try_into_godot_owned(call_ctx)?;
 
+    unsafe {
+        let ffi = val.into_ffi();
         ffi.move_return_ptr(ret, call_type);
     }
+
+    Ok(())
 }
 
 fn return_error<R>(call_ctx: &CallContext, err: ConvertError) -> ! {

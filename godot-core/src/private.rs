@@ -64,7 +64,7 @@ sys::plugin_registry!(pub __GODOT_DOCS_REGISTRY: DocsPlugin);
 //
 // When a Rust `#[func]` fails (returns Err), the error is stashed here so that Rust's `try_call()` can retrieve it
 // after the Godot round-trip. The varcall FFI callback simultaneously sets a *standard* Godot error code
-// (`GDEXTENSION_CALL_ERROR_INVALID_METHOD`) so that Godot's own GDScript VM recognizes the failure and aborts
+// (`GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT`) so that Godot's own GDScript VM recognizes the failure and aborts
 // the calling script function.
 //
 // Thread-safety: varcall callbacks execute on the calling thread, and `try_call` reads the result on the same
@@ -432,10 +432,14 @@ pub fn handle_fallible_varcall<F, R>(
     F: FnOnce() -> CallResult<R> + std::panic::UnwindSafe,
 {
     if handle_fallible_call(call_ctx, code) {
-        // Use a standard Godot error code so the GDScript VM recognizes the failure and aborts the calling function.
-        // The rich CallError has been stashed in the thread-local for Rust try_call() to retrieve.
+        // Use a non-OK error code so the GDScript VM recognizes the failure and aborts the calling function.
+        // The Rust-side CallError has been stored in the thread-local, so that try_call() can retrieve it later.
+        //
+        // None of the existing call errors is great for this scenario, and all lead to misleading errors in the Godot console.
+        // For now we opted for custom code, which will result in "Bug: Invalid call error code 1337.". Note that INVALID_METHOD
+        // must not be used -- it signals that the method doesn't exist, which can be treated as a fatal static error by GDScript.
         *out_err = sys::GDExtensionCallError {
-            error: sys::GDEXTENSION_CALL_ERROR_INVALID_METHOD,
+            error: 1337 as sys::GDExtensionCallErrorType, // alternative: sys::GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL.
             argument: 0,
             expected: 0,
         };

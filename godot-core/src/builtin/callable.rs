@@ -667,12 +667,12 @@ mod custom_callable {
         let ctx = meta::CallContext::custom_callable(name.as_ref());
 
         let err = unsafe { &mut *r_error };
-        crate::private::handle_fallible_varcall(&ctx, err, move || {
+        crate::private::handle_fallible_varcall(&ctx, err, || {
             // Re-borrow inside closure so C doesn't have to be UnwindSafe.
             let c: &mut C = unsafe { CallableUserdata::inner_from_raw(callable_userdata) };
             let result = c.invoke(arg_refs);
 
-            unsafe { meta::varcall_return_checked(Ok(result), r_return, r_error) };
+            unsafe { meta::varcall_return_checked(Ok(result), r_return, r_error, &ctx)? };
             Ok(())
         });
     }
@@ -697,7 +697,7 @@ mod custom_callable {
         let ctx = meta::CallContext::custom_callable(&w.name);
 
         let err = unsafe { &mut *r_error };
-        crate::private::handle_fallible_varcall(&ctx, err, move || {
+        crate::private::handle_fallible_varcall(&ctx, err, || {
             // Re-borrow inside closure so FnMut doesn't have to be UnwindSafe.
             let w: &mut FnWrapper<F> =
                 unsafe { CallableUserdata::inner_from_raw(callable_userdata) };
@@ -712,7 +712,7 @@ mod custom_callable {
             );
 
             let result = (w.rust_function)(arg_refs).to_variant();
-            unsafe { meta::varcall_return_checked(Ok(result), r_return, r_error) };
+            unsafe { meta::varcall_return_checked(Ok(result), r_return, r_error, &ctx)? };
             Ok(())
         });
     }

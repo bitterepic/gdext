@@ -326,6 +326,11 @@ impl CallError {
         err
     }
 
+    /// `#[func]` returning `Result<T, E>` which hits the `Err(E)` case *and* intends to fail the Godot call.
+    pub(crate) fn failed_by_user_result(call_ctx: &CallContext, message: String) -> Self {
+        Self::new(call_ctx, message, None)
+    }
+
     /// Whether this error was caused by a Rust panic (as opposed to a Godot or godot-rust error).
     ///
     /// If true, the panic hook has already printed the error; callers can avoid printing it again.
