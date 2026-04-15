@@ -12,7 +12,12 @@ use crate::classes::FileAccess;
 use crate::global::Error as GodotError;
 use crate::obj::Gd;
 
-/// Error that can occur while using `gdext` IO utilities.
+/// Error that can occur while using godot-rust I/O utilities.
+///
+/// Some APIs using this:
+/// - [`tools::try_load()`][crate::tools::try_load]
+/// - [`tools::try_save()`][crate::tools::try_save]
+/// - [`tools::GFile::try_from_unique()`][crate::tools::GFile::try_from_unique]
 #[derive(Debug)]
 pub struct IoError {
     data: ErrorData,
