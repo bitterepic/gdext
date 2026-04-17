@@ -116,6 +116,9 @@ fn native_audio_structure_out_parameter() {
         .unwrap()
         .cast::<SceneTree>();
 
+    #[cfg(since_api = "4.7")]
+    tree.get_root().add_child(&player);
+    #[cfg(before_api = "4.7")]
     tree.get_root().unwrap().add_child(&player);
     player.set_stream(&generator);
 

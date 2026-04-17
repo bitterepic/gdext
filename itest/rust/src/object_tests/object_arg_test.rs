@@ -6,7 +6,7 @@
  */
 
 use godot::builtin::{Variant, vslice};
-use godot::classes::{ClassDb, Node, RefCounted, ResourceFormatLoader, ResourceLoader};
+use godot::classes::{ClassDb, Node, RefCounted, ResourceFormatLoader, ResourceLoader, Script};
 use godot::global;
 use godot::meta::ToGodot;
 use godot::obj::{Gd, NewAlloc, NewGd, Singleton};
@@ -65,12 +65,13 @@ fn object_arg_option_owned() {
 
 #[itest]
 fn object_arg_option_borrowed() {
-    with_objects(|manual, refc| {
-        let db = ClassDb::singleton();
-        let a = db.class_set_property(Some(&manual), "name", &Variant::from("hello"));
-        let b = db.class_set_property(Some(&refc), "value", &Variant::from(-123));
-        (a, b)
-    });
+    let mut node = Node::new_alloc();
+    let script = create_gdscript("extends Node");
+
+    node.set_script(Some(&script));
+    assert!(node.get_script().is_some());
+
+    node.free();
 }
 
 /*
@@ -88,51 +89,43 @@ fn object_arg_option_borrowed_outer() {
 #[itest]
 fn object_arg_option_borrowed_mut() {
     // If you have an Option<&mut Gd<T>>, you can use as_deref() to get Option<&Gd<T>>.
+    let mut node = Node::new_alloc();
+    let mut script = create_gdscript("extends Node").upcast();
+    let script_opt: Option<&mut Gd<Script>> = Some(&mut script);
 
-    with_objects(|mut manual, mut refc| {
-        let db = ClassDb::singleton();
+    node.set_script(script_opt.as_deref());
+    assert!(node.get_script().is_some());
 
-        let manual_opt: Option<&mut Gd<Node>> = Some(&mut manual);
-        let refc_opt: Option<&mut Gd<RefcPayload>> = Some(&mut refc);
-
-        let a = db.class_set_property(manual_opt.as_deref(), "name", &Variant::from("hello"));
-        let b = db.class_set_property(refc_opt.as_deref(), "value", &Variant::from(-123));
-        (a, b)
-    });
-}
-
-// Changed in 4.7: https://github.com/godotengine/godot/pull/118588#discussion_r3083054076
-fn expected_property_err() -> global::Error {
-    if godot::init::GdextBuild::since_api("4.7") {
-        global::Error::ERR_INVALID_PARAMETER
-    } else {
-        global::Error::ERR_UNAVAILABLE
-    }
+    node.free();
 }
 
 #[itest]
 fn object_arg_option_none() {
-    let manual: Option<Gd<Node>> = None;
-    let refc: Option<Gd<RefcPayload>> = None;
+    let script = Some(create_gdscript("extends Node"));
+    let no_script = None::<Gd<Script>>;
 
-    // Will emit errors but should not crash.
-    let db = ClassDb::singleton();
-    let error = db.class_set_property(manual.as_ref(), "name", &Variant::from("hello"));
-    assert_eq!(error, expected_property_err());
+    // Pass Some first, to change internal state.
+    let mut node = Node::new_alloc();
+    node.set_script(script.as_ref());
+    assert_eq!(node.get_script(), script.map(|s| s.upcast()));
 
-    let error = db.class_set_property(refc.as_ref(), "value", &Variant::from(-123));
-    assert_eq!(error, expected_property_err());
+    // Verify None option can be passed to an engine API accepting Option<Gd<T>>.
+    node.set_script(no_script.as_ref());
+    assert_eq!(node.get_script(), None);
+
+    node.free();
 }
 
 #[itest]
 fn object_arg_null_arg() {
-    // Will emit errors but should not crash.
-    let db = ClassDb::singleton();
-    let error = db.class_set_property(Gd::null_arg(), "name", &Variant::from("hello"));
-    assert_eq!(error, expected_property_err());
+    // Verify null_arg() can be passed to an engine API accepting Option<Gd<T>>.
+    let mut node = Node::new_alloc();
+    node.set_script(&create_gdscript("extends Node"));
+    assert!(node.get_script().is_some());
 
-    let error = db.class_set_property(Gd::null_arg(), "value", &Variant::from(-123));
-    assert_eq!(error, expected_property_err());
+    node.set_script(Gd::<Script>::null_arg());
+    assert_eq!(node.get_script(), None);
+    node.free();
 }
 
 // Regression test for https://github.com/godot-rust/gdext/issues/835.
