@@ -26,13 +26,15 @@ pub fn transform_trait_impl(mut original_impl: venial::Impl) -> ParseResult<Toke
         &prv,
     );
 
-    let mut decls = IDecls::default();
+    let mut iface = InterfaceBuilder {
+        class_name: &class_name,
+        trait_path: &trait_path,
+        decls: IDecls::default(),
+    };
     let mut removed_methods_idx = Vec::new();
     let mut deprecation_warnings = TokenStream::new();
     for (index, item) in original_impl.body_items.iter_mut().enumerate() {
-        let method = if let venial::ImplMember::AssocFunction(f) = item {
-            f
-        } else {
+        let venial::ImplMember::AssocFunction(method) = item else {
             continue;
         };
 
@@ -56,67 +58,33 @@ pub fn transform_trait_impl(mut original_impl: venial::Impl) -> ParseResult<Toke
         match method_name_str.as_str() {
             "register_class" => {
                 validate_not_gd_self(is_gd_self, method)?;
-                handle_register_class(&class_name, &trait_path, cfg_attrs, &mut decls);
+                iface.handle_register_class(cfg_attrs);
             }
             "init" => {
                 validate_not_gd_self(is_gd_self, method)?;
-                handle_init(&class_name, &trait_path, cfg_attrs, &mut decls);
+                iface.handle_init(cfg_attrs);
             }
             "to_string" => {
-                handle_to_string(&class_name, &trait_path, cfg_attrs, &mut decls, is_gd_self);
+                iface.handle_to_string(cfg_attrs, is_gd_self);
             }
             "on_notification" => {
                 // POSTINIT notification can't be handled with the gd_self receiver
                 // since object will not be yet constructed.
                 validate_not_gd_self(is_gd_self, method)?;
-                handle_on_notification(&class_name, &trait_path, cfg_attrs, &mut decls);
+                iface.handle_on_notification(cfg_attrs);
             }
-            "on_get" => {
-                handle_get_property(&class_name, &trait_path, cfg_attrs, &mut decls, is_gd_self);
-            }
-            "on_set" => {
-                handle_set_property(&class_name, &trait_path, cfg_attrs, &mut decls, is_gd_self);
-            }
-            "on_validate_property" => {
-                handle_validate_property(
-                    &class_name,
-                    &trait_path,
-                    cfg_attrs,
-                    &mut decls,
-                    is_gd_self,
-                );
-            }
-            "on_get_property_list" => {
-                handle_get_property_list(
-                    &class_name,
-                    &trait_path,
-                    cfg_attrs,
-                    &mut decls,
-                    is_gd_self,
-                );
-            }
-            "on_property_get_revert" => {
-                handle_property_get_revert(
-                    &class_name,
-                    &trait_path,
-                    cfg_attrs,
-                    &mut decls,
-                    is_gd_self,
-                );
-            }
+            "on_get" => iface.handle_get_property(cfg_attrs, is_gd_self),
+            "on_set" => iface.handle_set_property(cfg_attrs, is_gd_self),
+            "on_validate_property" => iface.handle_validate_property(cfg_attrs, is_gd_self),
+            "on_get_property_list" => iface.handle_get_property_list(cfg_attrs, is_gd_self),
+            "on_property_get_revert" => iface.handle_property_get_revert(cfg_attrs, is_gd_self),
             regular_virtual_fn => {
-                // Break borrow chain to allow handle_regular_virtual_fn() to mutably borrow `method` and modify `original_impl` through it.
-                // let cfg_attrs = cfg_attrs.iter().cloned().collect()
-
                 // All the non-special engine ones: ready(), process(), etc.
                 // Can modify original_impl, concretely the fn body for f64->f32 conversions.
-                let changed_function = handle_regular_virtual_fn(
-                    &class_name,
-                    &trait_path,
+                let changed_function = iface.handle_regular_virtual_fn(
                     method,
                     regular_virtual_fn,
                     cfg_attrs,
-                    &mut decls,
                     is_gd_self,
                 )?;
 
@@ -126,11 +94,11 @@ pub fn transform_trait_impl(mut original_impl: venial::Impl) -> ParseResult<Toke
                 if let Some((new_params, new_body)) = changed_function {
                     method.params = new_params;
                     method.body = Some(new_body);
-                    //panic!("modify params: {}", method.params.to_token_stream().to_string());
                 }
             }
         }
     }
+    let mut decls = iface.decls;
 
     // If there is no ready() method explicitly overridden, we need to add one, to ensure that __before_ready() is called to
     // initialize the OnReady fields.
@@ -243,407 +211,374 @@ pub fn transform_trait_impl(mut original_impl: venial::Impl) -> ParseResult<Toke
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Handlers for individual symbols in #[godot_api].
 
-fn handle_register_class<'a>(
-    class_name: &Ident,
-    trait_path: &venial::TypeExpr,
-    cfg_attrs: Vec<&'a venial::Attribute>,
-    decls: &mut IDecls<'a>,
-) {
-    let IDecls {
-        register_class_impl,
-        ..
-    } = decls;
+/// Builds `I*` trait interfaces. Bundles parameters shared by all `handle_*` methods.
+///
+/// Per-method state like `cfg_attrs` and `is_gd_self` is passed as parameters, not stored here.
+struct InterfaceBuilder<'a> {
+    /// Name of the user's class (e.g. `Player`).
+    class_name: &'a Ident,
 
-    // Implements the trait once for each implementation of this method, forwarding the cfg attrs of each
-    // implementation to the generated trait impl. If the cfg attrs allow for multiple implementations of
-    // this method to exist, then Rust will generate an error, so we don't have to worry about the multiple
-    // trait implementations actually generating an error, since that can only happen if multiple
-    // implementations of the same method are kept by #[cfg] (due to user error).
-    // Thus, by implementing the trait once for each possible implementation of this method (depending on
-    // what #[cfg] allows), forwarding the cfg attrs, we ensure this trait impl will remain in the code if
-    // at least one of the method impls are kept.
-    *register_class_impl = quote! {
-        #register_class_impl
+    /// Trait being implemented (e.g. `INode2D`).
+    trait_path: &'a venial::TypeExpr,
 
-        #(#cfg_attrs)*
-        impl ::godot::obj::cap::GodotRegisterClass for #class_name {
-            fn __godot_register_class(builder: &mut ::godot::builder::GodotBuilder<Self>) {
-                <Self as #trait_path>::register_class(builder)
+    /// Accumulated output, built up across all `handle_*` calls and consumed at the end.
+    decls: IDecls<'a>,
+}
+
+impl<'a> InterfaceBuilder<'a> {
+    fn handle_register_class(&mut self, cfg_attrs: Vec<&'a venial::Attribute>) {
+        // Implements the trait once for each implementation of this method, forwarding the cfg attrs of each
+        // implementation to the generated trait impl. If the cfg attrs allow for multiple implementations of
+        // this method to exist, then Rust will generate an error, so we don't have to worry about the multiple
+        // trait implementations actually generating an error, since that can only happen if multiple
+        // implementations of the same method are kept by #[cfg] (due to user error).
+        // Thus, by implementing the trait once for each possible implementation of this method (depending on
+        // what #[cfg] allows), forwarding the cfg attrs, we ensure this trait impl will remain in the code if
+        // at least one of the method impls are kept.
+        let class_name = self.class_name;
+        let trait_path = self.trait_path;
+        let prev = &self.decls.register_class_impl;
+        self.decls.register_class_impl = quote! {
+            #prev
+
+            #(#cfg_attrs)*
+            impl ::godot::obj::cap::GodotRegisterClass for #class_name {
+                fn __godot_register_class(builder: &mut ::godot::builder::GodotBuilder<Self>) {
+                    <Self as #trait_path>::register_class(builder)
+                }
             }
-        }
-    };
-
-    decls.add_modifier(cfg_attrs, "with_register");
-}
-
-fn handle_init<'a>(
-    class_name: &Ident,
-    trait_path: &venial::TypeExpr,
-    cfg_attrs: Vec<&'a venial::Attribute>,
-    decls: &mut IDecls<'a>,
-) {
-    let IDecls {
-        godot_init_impl, ..
-    } = decls;
-
-    // If #[class(init)] or #[class(no_init)] is provided, deny overriding manual init().
-    let deny_manual_init_macro = util::format_class_deny_manual_init_macro(class_name);
-
-    *godot_init_impl = quote! {
-        #godot_init_impl
-        #deny_manual_init_macro!();
-
-        #(#cfg_attrs)*
-        impl ::godot::obj::cap::GodotDefault for #class_name {
-            fn __godot_user_init(base: ::godot::obj::Base<Self::Base>) -> Self {
-                <Self as #trait_path>::init(base)
-            }
-        }
-    };
-
-    decls.add_modifier(cfg_attrs, "with_create");
-}
-
-fn handle_to_string<'a>(
-    class_name: &Ident,
-    trait_path: &venial::TypeExpr,
-    cfg_attrs: Vec<&'a venial::Attribute>,
-    decls: &mut IDecls<'a>,
-    is_gd_self: bool,
-) {
-    let IDecls { to_string_impl, .. } = decls;
-
-    let (receiver_path, type_decl, receiver_call) =
-        make_inner_virtual_method_call(is_gd_self, false, trait_path);
-
-    *to_string_impl = quote! {
-
-        #(#cfg_attrs)*
-        impl ::godot::obj::cap::GodotToString for #class_name {
-            type Recv = #receiver_path;
-
-            fn __godot_to_string(mut this: ::godot::private::VirtualMethodReceiver<Self>) -> ::godot::builtin::GString {
-
-                #type_decl::to_string(#receiver_call)
-            }
-        }
-    };
-
-    decls.add_modifier(cfg_attrs, "with_string");
-}
-
-fn handle_on_notification<'a>(
-    class_name: &Ident,
-    trait_path: &venial::TypeExpr,
-    cfg_attrs: Vec<&'a venial::Attribute>,
-    decls: &mut IDecls<'a>,
-) {
-    let IDecls {
-        on_notification_impl,
-        ..
-    } = decls;
-
-    let inactive_class_early_return = make_inactive_class_check(TokenStream::new());
-    *on_notification_impl = quote! {
-        #on_notification_impl
-
-        #(#cfg_attrs)*
-        impl ::godot::obj::cap::GodotNotification for #class_name {
-            fn __godot_notification(&mut self, what: i32) {
-                use ::godot::obj::UserClass as _;
-
-                #inactive_class_early_return
-
-                <Self as #trait_path>::on_notification(self, what.into())
-            }
-        }
-    };
-
-    decls.add_modifier(cfg_attrs, "with_on_notification");
-}
-
-fn handle_get_property<'a>(
-    class_name: &Ident,
-    trait_path: &venial::TypeExpr,
-    cfg_attrs: Vec<&'a venial::Attribute>,
-    decls: &mut IDecls<'a>,
-    is_gd_self: bool,
-) {
-    let IDecls {
-        get_property_impl, ..
-    } = decls;
-
-    let (receiver_path, type_decl, receiver_call) =
-        make_inner_virtual_method_call(is_gd_self, false, trait_path);
-
-    let inactive_class_early_return = make_inactive_class_check(quote! { None });
-    *get_property_impl = quote! {
-        #(#cfg_attrs)*
-        impl ::godot::obj::cap::GodotGet for #class_name {
-            type Recv = #receiver_path;
-
-            fn __godot_get_property(mut this: ::godot::private::VirtualMethodReceiver<Self>, property: ::godot::builtin::StringName) -> Option<::godot::builtin::Variant> {
-                use ::godot::obj::UserClass as _;
-
-                #inactive_class_early_return
-
-                #type_decl::on_get(#receiver_call, property)
-            }
-        }
-    };
-
-    decls.add_modifier(cfg_attrs, "with_get_property");
-}
-
-fn handle_set_property<'a>(
-    class_name: &Ident,
-    trait_path: &venial::TypeExpr,
-    cfg_attrs: Vec<&'a venial::Attribute>,
-    decls: &mut IDecls<'a>,
-    is_gd_self: bool,
-) {
-    let IDecls {
-        set_property_impl, ..
-    } = decls;
-
-    let (receiver_path, type_decl, receiver_call) =
-        make_inner_virtual_method_call(is_gd_self, true, trait_path);
-
-    let inactive_class_early_return = make_inactive_class_check(quote! { false });
-    *set_property_impl = quote! {
-        #(#cfg_attrs)*
-        impl ::godot::obj::cap::GodotSet for #class_name {
-            type Recv = #receiver_path;
-
-            fn __godot_set_property(mut this: ::godot::private::VirtualMethodReceiver<Self>, property: ::godot::builtin::StringName, value: ::godot::builtin::Variant) -> bool {
-                use ::godot::obj::UserClass as _;
-
-                #inactive_class_early_return
-
-                #type_decl::on_set(#receiver_call, property, value)
-            }
-        }
-    };
-
-    decls.add_modifier(cfg_attrs, "with_set_property");
-}
-
-fn handle_validate_property<'a>(
-    class_name: &Ident,
-    trait_path: &venial::TypeExpr,
-    cfg_attrs: Vec<&'a venial::Attribute>,
-    decls: &mut IDecls<'a>,
-    is_gd_self: bool,
-) {
-    let IDecls {
-        validate_property_impl,
-        ..
-    } = decls;
-
-    let (receiver_path, type_decl, receiver_call) =
-        make_inner_virtual_method_call(is_gd_self, false, trait_path);
-
-    let inactive_class_early_return = make_inactive_class_check(TokenStream::new());
-    *validate_property_impl = quote! {
-        #(#cfg_attrs)*
-        impl ::godot::obj::cap::GodotValidateProperty for #class_name {
-            type Recv = #receiver_path;
-
-            fn __godot_validate_property(
-                mut this: ::godot::private::VirtualMethodReceiver<Self>,
-                property: &mut ::godot::register::info::PropertyInfo,
-            ) {
-                use ::godot::obj::UserClass as _;
-
-                #inactive_class_early_return
-                #type_decl::on_validate_property(#receiver_call, property);
-            }
-        }
-    };
-
-    decls.add_modifier(cfg_attrs, "with_validate_property");
-}
-
-#[cfg(before_api = "4.3")]
-fn handle_get_property_list<'a>(
-    _class_name: &Ident,
-    _trait_path: &venial::TypeExpr,
-    cfg_attrs: Vec<&'a venial::Attribute>,
-    decls: &mut IDecls<'a>,
-    _is_gd_self: bool,
-) {
-    decls.get_property_list_impl = quote! {
-        #(#cfg_attrs)*
-        compile_error!("`on_get_property_list` is only supported for Godot versions of at least 4.3");
-    };
-}
-
-#[cfg(since_api = "4.3")]
-fn handle_get_property_list<'a>(
-    class_name: &Ident,
-    trait_path: &venial::TypeExpr,
-    cfg_attrs: Vec<&'a venial::Attribute>,
-    decls: &mut IDecls<'a>,
-    is_gd_self: bool,
-) {
-    let IDecls {
-        get_property_list_impl,
-        ..
-    } = decls;
-
-    let (receiver_path, type_decl, receiver_call) =
-        make_inner_virtual_method_call(is_gd_self, true, trait_path);
-
-    // `get_property_list` is only supported in Godot API >= 4.3. If we add support for `get_property_list` to earlier
-    // versions of Godot then this code is still needed and should be uncommented.
-    //
-    // let inactive_class_early_return = make_inactive_class_check(false);
-    *get_property_list_impl = quote! {
-        #(#cfg_attrs)*
-        impl ::godot::obj::cap::GodotGetPropertyList for #class_name {
-            type Recv = #receiver_path;
-
-            fn __godot_get_property_list(mut this: ::godot::private::VirtualMethodReceiver<Self>) -> Vec<::godot::register::info::PropertyInfo> {
-                // #inactive_class_early_return
-                #type_decl::on_get_property_list(#receiver_call)
-            }
-        }
-    };
-
-    decls.add_modifier(cfg_attrs, "with_get_property_list");
-}
-
-fn handle_property_get_revert<'a>(
-    class_name: &Ident,
-    trait_path: &venial::TypeExpr,
-    cfg_attrs: Vec<&'a venial::Attribute>,
-    decls: &mut IDecls<'a>,
-    is_gd_self: bool,
-) {
-    let IDecls {
-        property_get_revert_impl,
-        ..
-    } = decls;
-
-    let (receiver_path, type_decl, receiver_call) =
-        make_inner_virtual_method_call(is_gd_self, false, trait_path);
-
-    let inactive_class_early_return = make_inactive_class_check(quote! { None });
-    *property_get_revert_impl = quote! {
-        #(#cfg_attrs)*
-        impl ::godot::obj::cap::GodotPropertyGetRevert for #class_name {
-            type Recv = #receiver_path;
-
-            fn __godot_property_get_revert(this: ::godot::private::VirtualMethodReceiver<Self>, property: StringName) -> Option<::godot::builtin::Variant> {
-                use ::godot::obj::UserClass as _;
-
-                #inactive_class_early_return
-
-                #type_decl::on_property_get_revert(#receiver_call, property)
-            }
-        }
-    };
-
-    decls.add_modifier(cfg_attrs, "with_property_get_revert");
-}
-
-fn handle_regular_virtual_fn<'a>(
-    class_name: &Ident,
-    trait_path: &venial::TypeExpr,
-    original_method: &venial::Function,
-    method_name: &str,
-    cfg_attrs: Vec<&'a venial::Attribute>,
-    decls: &mut IDecls<'a>,
-    has_gd_self: bool,
-) -> ParseResult<Option<(venial::Punctuated<venial::FnParam>, Group)>> {
-    // Fresh ident for generated code (`virtuals::method_name` constant lookup).
-    // Using original span would cause IDE to show wrong semantic color for the original function definition.
-    let method_name_ident = ident(method_name);
-    let mut method = util::reduce_to_signature(original_method);
-    validate_receiver_extract_gdself(&mut method, has_gd_self, &original_method.name)?;
-
-    // Godot-facing name begins with underscore.
-    //
-    // godot-codegen special-cases the virtual method called _init (which exists on a handful of classes, distinct from the default
-    // constructor) to init_ext, to avoid Rust-side ambiguity. See godot_codegen::class_generator::virtual_method_name.
-    let virtual_method_name = if method_name == "init_ext" {
-        String::from("_init")
-    } else {
-        format!("_{method_name}")
-    };
-
-    let signature_info = into_signature_info(method, class_name, has_gd_self);
-
-    let mut updated_function = None;
-    // If there was a signature change (e.g. f32 -> f64 in process/physics_process), apply to new function tokens.
-    if !signature_info.modified_param_types.is_empty() {
-        let mut param_name = None;
-
-        let mut new_params = original_method.params.clone();
-        let mut original_ty_span = None;
-
-        for (index, new_ty) in signature_info.modified_param_types.iter() {
-            let venial::FnParam::Typed(typed) = &mut new_params.inner[*index].0 else {
-                panic!("unexpected parameter type: {new_params:?}");
-            };
-
-            // Capture original type span before replacing (e.g. the user's `f32`).
-            original_ty_span = Some(typed.ty.span());
-
-            typed.ty = new_ty.clone();
-            param_name = Some(typed.name.clone());
-        }
-
-        let original_body = &original_method.body;
-        let param_name = param_name.expect("parameter had no name");
-        let original_ty_span = original_ty_span.expect("type had no span");
-
-        // Currently hardcoded to f32/f64 exchange; can be generalized if needed.
-        // Create f32 ident with the original type's span for proper syntax highlighting. Works here because f64 uses same semantic color.
-        let f32_ty = Ident::new("f32", original_ty_span);
-
-        let body_code = quote! {
-            let #param_name = #param_name as #f32_ty;
-            #original_body
         };
 
-        // Set span from original body, or fallback to method name span.
-        let span = match original_body {
-            Some(body) => body.span(),
-            None => original_method.name.span(),
-        };
-
-        let mut wrapping_body = Group::new(Delimiter::Brace, body_code);
-        wrapping_body.set_span(span);
-
-        updated_function = Some((new_params, wrapping_body));
+        self.decls.add_modifier(cfg_attrs, "with_register");
     }
 
-    // Overridden ready() methods additionally have an additional `__before_ready()` call (for OnReady inits).
-    let before_kind = if method_name == "ready" {
-        BeforeKind::WithBefore
-    } else {
-        BeforeKind::Without
-    };
+    fn handle_init(&mut self, cfg_attrs: Vec<&'a venial::Attribute>) {
+        // If #[class(init)] or #[class(no_init)] is provided, deny overriding manual init().
+        let class_name = self.class_name;
+        let trait_path = self.trait_path;
+        let deny_manual_init_macro = util::format_class_deny_manual_init_macro(class_name);
 
-    // Note that, if the same method is implemented multiple times (with different cfg attr combinations),
-    // then there will be multiple match arms annotated with the same cfg attr combinations, thus they will
-    // be reduced to just one arm (at most, if the implementations aren't all removed from compilation) for
-    // each distinct method.
-    decls.overridden_virtuals.push(OverriddenVirtualFn {
-        cfg_attrs,
-        rust_method_name: virtual_method_name,
-        // If ever the `I*` verbatim validation is relaxed (it won't work with use-renames or other weird edge cases), the approach
-        // with godot::private::virtuals module could be changed to something like the following (GodotBase = nearest Godot base class):
-        // __get_virtual_hash::<Self::GodotBase>("method")
-        godot_name_hash_constant: quote! { virtuals::#method_name_ident },
-        signature_info,
-        before_kind,
-        interface_trait: Some(trait_path.clone()),
-    });
+        let prev = &self.decls.godot_init_impl;
+        self.decls.godot_init_impl = quote! {
+            #prev
+            #deny_manual_init_macro!();
 
-    Ok(updated_function)
-}
+            #(#cfg_attrs)*
+            impl ::godot::obj::cap::GodotDefault for #class_name {
+                fn __godot_user_init(base: ::godot::obj::Base<Self::Base>) -> Self {
+                    <Self as #trait_path>::init(base)
+                }
+            }
+        };
+
+        self.decls.add_modifier(cfg_attrs, "with_create");
+    }
+
+    fn handle_to_string(&mut self, cfg_attrs: Vec<&'a venial::Attribute>, is_gd_self: bool) {
+        self.decls.to_string_impl = self.make_virtual_impl(
+            &cfg_attrs,
+            is_gd_self,
+            false,
+            "GodotToString",
+            |iface, recv| {
+                quote! {
+                    fn __godot_to_string(
+                        mut this: ::godot::private::VirtualMethodReceiver<Self>,
+                    ) -> ::godot::builtin::GString {
+                        #iface::to_string(#recv)
+                    }
+                }
+            },
+        );
+        self.decls.add_modifier(cfg_attrs, "with_string");
+    }
+
+    fn handle_on_notification(&mut self, cfg_attrs: Vec<&'a venial::Attribute>) {
+        let class_name = self.class_name;
+        let trait_path = self.trait_path;
+        let inactive_check = make_inactive_class_check(TokenStream::new());
+        let prev = &self.decls.on_notification_impl;
+        self.decls.on_notification_impl = quote! {
+            #prev
+
+            #(#cfg_attrs)*
+            impl ::godot::obj::cap::GodotNotification for #class_name {
+                fn __godot_notification(&mut self, what: i32) {
+                    #inactive_check
+                    <Self as #trait_path>::on_notification(self, what.into())
+                }
+            }
+        };
+
+        self.decls.add_modifier(cfg_attrs, "with_on_notification");
+    }
+
+    fn handle_get_property(&mut self, cfg_attrs: Vec<&'a venial::Attribute>, is_gd_self: bool) {
+        let inactive_check = make_inactive_class_check(quote! { None });
+        self.decls.get_property_impl =
+            self.make_virtual_impl(&cfg_attrs, is_gd_self, false, "GodotGet", |iface, recv| {
+                quote! {
+                    fn __godot_get_property(
+                        mut this: ::godot::private::VirtualMethodReceiver<Self>,
+                        property: ::godot::builtin::StringName,
+                    ) -> Option<::godot::builtin::Variant> {
+                        #inactive_check
+                        #iface::on_get(#recv, property)
+                    }
+                }
+            });
+        self.decls.add_modifier(cfg_attrs, "with_get_property");
+    }
+
+    fn handle_set_property(&mut self, cfg_attrs: Vec<&'a venial::Attribute>, is_gd_self: bool) {
+        let inactive_check = make_inactive_class_check(quote! { false });
+        self.decls.set_property_impl =
+            self.make_virtual_impl(&cfg_attrs, is_gd_self, true, "GodotSet", |iface, recv| {
+                quote! {
+                    fn __godot_set_property(
+                        mut this: ::godot::private::VirtualMethodReceiver<Self>,
+                        property: ::godot::builtin::StringName,
+                        value: ::godot::builtin::Variant,
+                    ) -> bool {
+                        #inactive_check
+                        #iface::on_set(#recv, property, value)
+                    }
+                }
+            });
+        self.decls.add_modifier(cfg_attrs, "with_set_property");
+    }
+
+    fn handle_validate_property(
+        &mut self,
+        cfg_attrs: Vec<&'a venial::Attribute>,
+        is_gd_self: bool,
+    ) {
+        let inactive_check = make_inactive_class_check(TokenStream::new());
+        self.decls.validate_property_impl = self.make_virtual_impl(
+            &cfg_attrs,
+            is_gd_self,
+            false,
+            "GodotValidateProperty",
+            |iface, recv| {
+                quote! {
+                    fn __godot_validate_property(
+                        mut this: ::godot::private::VirtualMethodReceiver<Self>,
+                        property: &mut ::godot::register::info::PropertyInfo,
+                    ) {
+                        #inactive_check
+                        #iface::on_validate_property(#recv, property);
+                    }
+                }
+            },
+        );
+        self.decls.add_modifier(cfg_attrs, "with_validate_property");
+    }
+
+    #[cfg(before_api = "4.3")]
+    fn handle_get_property_list(
+        &mut self,
+        cfg_attrs: Vec<&'a venial::Attribute>,
+        _is_gd_self: bool,
+    ) {
+        self.decls.get_property_list_impl = quote! {
+            #(#cfg_attrs)*
+            compile_error!("`on_get_property_list` is only supported for Godot versions of at least 4.3");
+        };
+    }
+
+    #[cfg(since_api = "4.3")]
+    fn handle_get_property_list(
+        &mut self,
+        cfg_attrs: Vec<&'a venial::Attribute>,
+        is_gd_self: bool,
+    ) {
+        self.decls.get_property_list_impl = self.make_virtual_impl(
+            &cfg_attrs,
+            is_gd_self,
+            true,
+            "GodotGetPropertyList",
+            |iface, recv| {
+                quote! {
+                    fn __godot_get_property_list(
+                        mut this: ::godot::private::VirtualMethodReceiver<Self>,
+                    ) -> Vec<::godot::register::info::PropertyInfo> {
+                        #iface::on_get_property_list(#recv)
+                    }
+                }
+            },
+        );
+        self.decls.add_modifier(cfg_attrs, "with_get_property_list");
+    }
+
+    fn handle_property_get_revert(
+        &mut self,
+        cfg_attrs: Vec<&'a venial::Attribute>,
+        is_gd_self: bool,
+    ) {
+        let inactive_check = make_inactive_class_check(quote! { None });
+        self.decls.property_get_revert_impl = self.make_virtual_impl(
+            &cfg_attrs,
+            is_gd_self,
+            false,
+            "GodotPropertyGetRevert",
+            |iface, recv| {
+                quote! {
+                    fn __godot_property_get_revert(
+                        this: ::godot::private::VirtualMethodReceiver<Self>,
+                        property: StringName,
+                    ) -> Option<::godot::builtin::Variant> {
+                        #inactive_check
+                        #iface::on_property_get_revert(#recv, property)
+                    }
+                }
+            },
+        );
+        self.decls
+            .add_modifier(cfg_attrs, "with_property_get_revert");
+    }
+
+    fn handle_regular_virtual_fn(
+        &mut self,
+        original_method: &venial::Function,
+        method_name: &str,
+        cfg_attrs: Vec<&'a venial::Attribute>,
+        has_gd_self: bool,
+    ) -> ParseResult<Option<(venial::Punctuated<venial::FnParam>, Group)>> {
+        // Fresh ident for generated code (`virtuals::method_name` constant lookup).
+        // Using original span would cause IDE to show wrong semantic color for the original function definition.
+        let method_name_ident = ident(method_name);
+        let mut method = util::reduce_to_signature(original_method);
+        validate_receiver_extract_gdself(&mut method, has_gd_self, &original_method.name)?;
+
+        // Godot-facing name begins with underscore.
+        //
+        // godot-codegen special-cases the virtual method called _init (which exists on a handful of classes, distinct from the default
+        // constructor) to init_ext, to avoid Rust-side ambiguity. See godot_codegen::class_generator::virtual_method_name.
+        let virtual_method_name = if method_name == "init_ext" {
+            String::from("_init")
+        } else {
+            format!("_{method_name}")
+        };
+
+        let signature_info = into_signature_info(method, self.class_name, has_gd_self);
+
+        let mut updated_function = None;
+        // If there was a signature change (e.g. f32 -> f64 in process/physics_process), apply to new function tokens.
+        if !signature_info.modified_param_types.is_empty() {
+            let mut param_name = None;
+
+            let mut new_params = original_method.params.clone();
+            let mut original_ty_span = None;
+
+            for (index, new_ty) in signature_info.modified_param_types.iter() {
+                let venial::FnParam::Typed(typed) = &mut new_params.inner[*index].0 else {
+                    panic!("unexpected parameter type: {new_params:?}");
+                };
+
+                // Capture original type span before replacing (e.g. the user's `f32`).
+                original_ty_span = Some(typed.ty.span());
+
+                typed.ty = new_ty.clone();
+                param_name = Some(typed.name.clone());
+            }
+
+            let original_body = &original_method.body;
+            let param_name = param_name.expect("parameter had no name");
+            let original_ty_span = original_ty_span.expect("type had no span");
+
+            // Currently hardcoded to f32/f64 exchange; can be generalized if needed.
+            // Create f32 ident with the original type's span for proper syntax highlighting. Works here because f64 uses same semantic color.
+            let f32_ty = Ident::new("f32", original_ty_span);
+
+            let body_code = quote! {
+                let #param_name = #param_name as #f32_ty;
+                #original_body
+            };
+
+            // Set span from original body, or fallback to method name span.
+            let span = match original_body {
+                Some(body) => body.span(),
+                None => original_method.name.span(),
+            };
+
+            let mut wrapping_body = Group::new(Delimiter::Brace, body_code);
+            wrapping_body.set_span(span);
+
+            updated_function = Some((new_params, wrapping_body));
+        }
+
+        // Overridden ready() methods additionally have an additional `__before_ready()` call (for OnReady inits).
+        let before_kind = if method_name == "ready" {
+            BeforeKind::WithBefore
+        } else {
+            BeforeKind::Without
+        };
+
+        // Note that, if the same method is implemented multiple times (with different cfg attr combinations),
+        // then there will be multiple match arms annotated with the same cfg attr combinations, thus they will
+        // be reduced to just one arm (at most, if the implementations aren't all removed from compilation) for
+        // each distinct method.
+        self.decls.overridden_virtuals.push(OverriddenVirtualFn {
+            cfg_attrs,
+            rust_method_name: virtual_method_name,
+            // If ever the `I*` verbatim validation is relaxed (it won't work with use-renames or other weird edge cases), the approach
+            // with godot::private::virtuals module could be changed to something like the following (GodotBase = nearest Godot base class):
+            // __get_virtual_hash::<Self::GodotBase>("method")
+            godot_name_hash_constant: quote! { virtuals::#method_name_ident },
+            signature_info,
+            before_kind,
+            interface_trait: Some(self.trait_path.clone()),
+        });
+
+        Ok(updated_function)
+    }
+
+    /// Generates a `impl ::godot::obj::cap::{cap_trait_name} for {class_name}` block with the correct receiver type.
+    ///
+    /// `make_fn` receives `(iface, recv)` tokens and should return the full `fn` item (signature + body).
+    /// `iface` is the qualified dispatch path, e.g. `<Self as INode2D>` (or `Self` for gd_self).
+    /// `recv` is the receiver expression to pass as first argument to the interface method.
+    fn make_virtual_impl(
+        &self,
+        cfg_attrs: &[&venial::Attribute],
+        is_gd_self: bool,
+        is_mut: bool,
+        cap_trait_name: &str,
+        make_fn: impl FnOnce(&TokenStream, &TokenStream) -> TokenStream,
+    ) -> TokenStream {
+        let class_name = self.class_name;
+        let trait_path = self.trait_path;
+
+        let (receiver_path, iface, recv) = match (is_gd_self, is_mut) {
+            (false, true) => (
+                quote! { ::godot::private::RecvMut },
+                quote! { <Self as #trait_path> },
+                quote! { &mut *this.recv_self_mut() },
+            ),
+            (false, false) => (
+                quote! { ::godot::private::RecvRef },
+                quote! { <Self as #trait_path> },
+                quote! { &*this.recv_self() },
+            ),
+            (true, _) => (
+                quote! { ::godot::private::RecvGdSelf },
+                quote! { Self },
+                quote! { this.recv_gd() },
+            ),
+        };
+
+        let fn_body = make_fn(&iface, &recv);
+        let cap_trait = ident(cap_trait_name);
+
+        quote! {
+            #(#cfg_attrs)*
+            impl ::godot::obj::cap::#cap_trait for #class_name {
+                type Recv = #receiver_path;
+                #fn_body
+            }
+        }
+    }
+} // impl IfaceBuilder
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Rest of implementation
@@ -671,6 +606,7 @@ fn is_possibly_node_class(trait_base_class: &Ident) -> bool {
 #[cfg(before_api = "4.3")]
 fn make_inactive_class_check(return_value: TokenStream) -> TokenStream {
     quote! {
+        use ::godot::obj::UserClass as _;
         if ::godot::private::is_class_inactive(Self::__config().is_tool) {
             return #return_value;
         }
@@ -680,30 +616,6 @@ fn make_inactive_class_check(return_value: TokenStream) -> TokenStream {
 #[cfg(since_api = "4.3")]
 fn make_inactive_class_check(_return_value: TokenStream) -> TokenStream {
     TokenStream::new()
-}
-
-fn make_inner_virtual_method_call(
-    is_gd_self: bool,
-    is_mut: bool,
-    trait_path: &venial::TypeExpr,
-) -> (TokenStream, TokenStream, TokenStream) {
-    match (is_gd_self, is_mut) {
-        (false, true) => (
-            quote! {::godot::private::RecvMut},
-            quote! {<Self as #trait_path>},
-            quote! {&mut *this.recv_self_mut()},
-        ),
-        (false, false) => (
-            quote! {::godot::private::RecvRef},
-            quote! {<Self as #trait_path>},
-            quote! {& *this.recv_self()},
-        ),
-        (true, _) => (
-            quote! {::godot::private::RecvGdSelf},
-            quote! {Self},
-            quote! {this.recv_gd()},
-        ),
-    }
 }
 
 fn is_gd_self(attributes: &[venial::Attribute]) -> ParseResult<bool> {
