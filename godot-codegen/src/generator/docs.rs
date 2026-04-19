@@ -162,3 +162,8 @@ pub fn make_module_doc(class_name: &TyName) -> String {
         See also [Godot docs for `{godot_ty}` enums]({online_link}).\n\n"
     )
 }
+
+pub fn make_utility_fn_doc(function_name: &str) -> Option<String> {
+    let notes = special_cases::get_utility_fn_extra_docs(function_name)?;
+    Some(format!("\n\n# Specific notes for this function\n\n{notes}"))
+}

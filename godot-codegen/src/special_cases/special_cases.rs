@@ -947,6 +947,18 @@ pub fn get_interface_extra_docs(trait_name: &str) -> Option<&'static str> {
     }
 }
 
+pub fn get_utility_fn_extra_docs(function_name: &str) -> Option<&'static str> {
+    let docs = match function_name {
+        "weakref" => {
+            "Use of `weakref()` is discouraged. See [`WeakRef`][crate::classes::WeakRef] for \
+            a detailed explanation and better alternatives."
+        }
+        _ => return None,
+    };
+
+    Some(docs)
+}
+
 #[cfg(before_api = "4.4")]
 pub fn is_virtual_method_required(class_name: &TyName, godot_method_name: &str) -> bool {
     // Do not call is_derived_virtual_method_required() here; that is handled in virtual_traits.rs.
