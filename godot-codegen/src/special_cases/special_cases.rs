@@ -101,7 +101,7 @@ pub fn get_class_method_deprecation(class_name: &TyName, method: &JsonClassMetho
 
         _ => return None,
     };
-    
+
     Some(deprecation_msg)
 }
 
@@ -771,7 +771,7 @@ pub fn is_class_method_const(class_name: &TyName, godot_method: &JsonClassMethod
         _ if !godot_method.is_const && !godot_method.is_static && !godot_method.is_virtual
             && ["get_", "is_", "has_"].iter().any(|p| godot_method.name.starts_with(p))
         => Some(true),
-        
+
         _ => None,
     }
 }
@@ -785,7 +785,7 @@ pub fn is_class_method_param_required(
     param: &Ident, // Don't use `&str` to avoid to_string() allocations for each check on call-site.
 ) -> bool {
     // Could possibly be unified with `meta=required` handling right at the JSON->domain mapping. Could then also apply to non-virtual fns.
-    
+
     // Note: for virtual methods, it's enough if a base class method is declared here; it will be picked up by derived classes.
 
     let param = param.to_string();
@@ -798,7 +798,7 @@ pub fn is_class_method_param_required(
         | ("Control", "_gui_input", "event")
 
         // https://docs.godotengine.org/en/stable/classes/class_collisionobject2d.html#class-collisionobject2d-private-method-input-event
-        | ("CollisionObject2D", "_input_event", "viewport" | "event") 
+        | ("CollisionObject2D", "_input_event", "viewport" | "event")
 
         // UI.
 
@@ -911,20 +911,30 @@ pub fn maybe_rename_virtual_method<'m>(
 //   or #[export(storage)] which is #[export] without editor UI.
 
 pub fn get_class_extra_docs(class_name: &TyName) -> Option<&'static str> {
-    match class_name.godot_ty.as_str() {
-        "FileAccess" => Some(
-            "The godot-rust library provides a higher-level abstraction, which should be preferred: [`GFile`][crate::tools::GFile].",
-        ),
-        "ScriptExtension" => {
-            Some("Use this in combination with the [`obj::script` module][crate::obj::script].")
+    let docs = match class_name.godot_ty.as_str() {
+        "FileAccess" => {
+            "The godot-rust library provides a higher-level abstraction, which should be preferred: [`GFile`][crate::tools::GFile]."
         }
-        "ResourceFormatLoader" => Some(
+        "ScriptExtension" => {
+            "Use this in combination with the [`obj::script` module][crate::obj::script]."
+        }
+        "ResourceFormatLoader" => {
             "Enable the `experimental-threads` feature when using custom `ResourceFormatLoader`s. \
             Otherwise the application will panic when the custom `ResourceFormatLoader` is used by Godot \
-            in a thread other than the main thread.",
-        ),
-        _ => None,
-    }
+            in a thread other than the main thread."
+        }
+        "WeakRef" => {
+            "It's almost never a good idea to use this class. You can use instance IDs as _weak references_, and upgrade to strong references \
+            through [`Gd::try_from_instance_id()`](crate::obj::Gd::try_from_instance_id). This works for both manually-managed and ref-counted \
+            classes. You can even build your own generic `WeakRef<T>` wrapper around `InstanceId` and achieve better type-safety and performance \
+            than Godot's `WeakRef` class, which carries the whole object overhead instead of an `i64`.\n\n\
+            The only reason to use `WeakRef` is when you need to interact with a third-party API that does so. Godot itself doesn't use it in \
+            any API outside of [`global::weakref()`][crate::global::weakref]."
+        }
+        _ => return None,
+    };
+
+    Some(docs)
 }
 
 pub fn get_interface_extra_docs(trait_name: &str) -> Option<&'static str> {
@@ -1182,7 +1192,7 @@ pub fn get_derived_virtual_method_presence(class_name: &TyName, godot_method_nam
 /// - **Scene level**: All singletons including `RenderingServer` are available.
 /// - **Editor level**: Editor-specific functionality is available.
 ///
-/// GDExtension singletons are generally not available during *any* level initialization, with the exception of a few core singletons 
+/// GDExtension singletons are generally not available during *any* level initialization, with the exception of a few core singletons
 /// (see above). This is different from how modules work, where servers are available at _Servers_ level.
 ///
 /// See also:
@@ -1217,7 +1227,7 @@ pub fn classify_codegen_level(class_name: &str) -> Option<ClassCodegenLevel> {
         | "PhysicsDirectBodyState2D" | "PhysicsDirectBodyState2DExtension" 
         | "PhysicsDirectSpaceState2D" | "PhysicsDirectSpaceState2DExtension" 
         | "PhysicsServer2D" | "PhysicsServer2DExtension" 
-        | "PhysicsServer2DManager" 
+        | "PhysicsServer2DManager"
         | "PhysicsDirectBodyState3D" | "PhysicsDirectBodyState3DExtension" 
         | "PhysicsDirectSpaceState3D" | "PhysicsDirectSpaceState3DExtension" 
         | "PhysicsServer3D" | "PhysicsServer3DExtension" 
@@ -1226,7 +1236,7 @@ pub fn classify_codegen_level(class_name: &str) -> Option<ClassCodegenLevel> {
         | "RenderData" | "RenderDataExtension"
         | "RenderSceneData" | "RenderSceneDataExtension"
         => ClassCodegenLevel::Servers,
-        
+
         // Declared final (un-inheritable) in Rust, but those are still servers.
         | "AudioServer" | "CameraServer" | "NavigationServer2D" | "NavigationServer3D" | "RenderingServer" | "TranslationServer" | "XRServer" | "DisplayServer"
         => ClassCodegenLevel::Servers,
@@ -1235,11 +1245,11 @@ pub fn classify_codegen_level(class_name: &str) -> Option<ClassCodegenLevel> {
         // https://github.com/godotengine/godot/issues/103867
         "OpenXRInteractionProfileEditorBase"
         | "OpenXRInteractionProfileEditor"
-        | "OpenXRBindingModifierEditor" if cfg!(before_api = "4.5") 
+        | "OpenXRBindingModifierEditor" if cfg!(before_api = "4.5")
         => ClassCodegenLevel::Editor,
-        
+
         // https://github.com/godotengine/godot/issues/86206
-        "ResourceImporterOggVorbis" | "ResourceImporterMP3" if cfg!(before_api = "4.3") 
+        "ResourceImporterOggVorbis" | "ResourceImporterMP3" if cfg!(before_api = "4.3")
         => ClassCodegenLevel::Editor,
 
         // No special-case override for this class.
