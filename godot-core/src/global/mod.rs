@@ -25,16 +25,16 @@
 //!
 //! - Color: [`ColorChannelOrder`][crate::builtin::ColorChannelOrder]
 //! - Projection: [`ProjectionEye`][crate::builtin::ProjectionEye], [`ProjectionPlane`][crate::builtin::ProjectionPlane]
-//! - Rectangle: [`Side`], [`Corner`] <sub>(godot-generated)</sub>
-//! - Rotation: [`EulerOrder`] <sub>(godot-generated)</sub>
+//! - Rectangle: [`Side`][crate::builtin::Side], [`Corner`][crate::builtin::Corner] <sub>(godot-generated)</sub>
+//! - Rotation: [`EulerOrder`][crate::builtin::EulerOrder] <sub>(godot-generated)</sub>
 //! - Variant: [`VariantType`][crate::builtin::VariantType], [`VariantOperator`][crate::builtin::VariantOperator]
 //! - Vector: [`Vector2Axis`][crate::builtin::Vector2Axis], [`Vector3Axis`][crate::builtin::Vector3Axis], [`Vector4Axis`][crate::builtin::Vector4Axis]
 //!
 //! Some enums are closely related to property/method registration and are located in [`godot::register::info`][crate::registry::info]:
 //!
-//! - [`PropertyHint`] <sub>(godot-generated)</sub>
-//! - [`PropertyUsageFlags`] <sub>(godot-generated)</sub>
-//! - [`MethodFlags`] <sub>(godot-generated)</sub>
+//! - [`PropertyHint`][crate::registry::info::PropertyHint] <sub>(godot-generated)</sub>
+//! - [`PropertyUsageFlags`][crate::registry::info::PropertyUsageFlags] <sub>(godot-generated)</sub>
+//! - [`MethodFlags`][crate::registry::info::MethodFlags] <sub>(godot-generated)</sub>
 
 // Doc aliases are also available in dedicated APIs, but directing people here may give them a bit more context.
 #![doc(
@@ -52,17 +52,8 @@ pub use crate::{
     godot_error, godot_print, godot_print_rich, godot_script_error, godot_str, godot_warn,
 };
 
-// ----------------------------------------------------------------------------------------------------------------------------------------------
-// Internal re-exports
-
-// This is needed for generated classes to find symbols, even those that have been moved to crate::builtin.
-#[allow(unused_imports)] // micromanaging imports for generated code is not fun
-#[rustfmt::skip] // Do not reorder.
-pub(crate) use crate::builtin::{Corner, EulerOrder, Side};
-
-// This is needed for generated code to find symbols that have been moved to crate::registry::info.
-#[allow(unused_imports)]
-pub(crate) use crate::registry::info::{MethodFlags, PropertyHint, PropertyUsageFlags};
+// Some enums that are global in Godot are moved to different Rust modules. Codegen takes care of it by adjusting their path accordingly.
+// See get_global_enum_rust_path() in special_cases.rs.
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // Deprecations

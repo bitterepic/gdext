@@ -15,7 +15,7 @@ use quote::{ToTokens, quote};
 use crate::context::Context;
 use crate::conv;
 use crate::models::domain::{ArgPassing, FlowDirection, GodotTy, ModName, RustTy, TyName};
-use crate::special_cases::is_builtin_type_scalar;
+use crate::special_cases::{get_global_enum_rust_path, is_builtin_type_scalar};
 use crate::util::ident;
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
@@ -345,10 +345,11 @@ pub(crate) fn to_enum_type_uncached(enum_or_bitfield: &str, is_bitfield: bool) -
         to_class_enum_uncached("Resource", enum_or_bitfield, is_bitfield)
     } else {
         // Global enum or bitfield.
+        let path = get_global_enum_rust_path(enum_or_bitfield);
         let enum_or_bitfield_name = conv::make_enum_name(enum_or_bitfield);
 
         RustTy::EngineEnum {
-            tokens: quote! { crate::global::#enum_or_bitfield_name },
+            tokens: quote! { #path::#enum_or_bitfield_name },
             surrounding_class: None,
             is_bitfield,
         }

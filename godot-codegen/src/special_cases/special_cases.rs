@@ -29,7 +29,8 @@
 
 use std::borrow::Cow;
 
-use proc_macro2::Ident;
+use proc_macro2::{Ident, TokenStream};
+use quote::quote;
 
 use crate::Context;
 use crate::conv::to_enum_type_uncached;
@@ -1265,6 +1266,15 @@ pub fn is_enum_private(class_name: Option<&TyName>, enum_name: &str) -> bool {
         | (None, "MethodFlags")
 
         => true, _ => false
+    }
+}
+
+/// Returns the Rust module path of a global Godot enum (instead of `crate::global::EnumName`).
+pub fn get_global_enum_rust_path(enum_name: &str) -> TokenStream {
+    match enum_name {
+        "PropertyHint" | "PropertyUsageFlags" | "MethodFlags" => quote! { crate::registry::info },
+        "Corner" | "EulerOrder" | "Side" => quote! { crate::builtin },
+        _ => quote! { crate::global },
     }
 }
 
