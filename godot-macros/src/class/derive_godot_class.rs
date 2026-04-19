@@ -450,46 +450,45 @@ fn make_oneditor_panic_inits(class_name: &Ident, all_fields: &[Field]) -> TokenS
     // Despite its name OnEditor shouldn't panic in the editor for tool classes.
     let is_in_editor = quote! { <::godot::classes::Engine as ::godot::obj::Singleton>::singleton().is_editor_hint() };
 
-    let are_all_oneditor_fields_valid = quote! { are_all_oneditor_fields_valid };
-
-    // Informs the user which fields haven't been set, instead of panicking on the very first one. Useful for debugging.
     let on_editor_fields_checks = all_fields
         .iter()
         .filter(|&field| field.is_oneditor)
         .map(|field| {
             let field = &field.name;
-            let warning_message =
-                format! { "godot-rust: OnEditor field {field} hasn't been initialized."};
+            let field_name_str = field.to_string();
 
             quote! {
                 if this.#field.is_invalid() {
-                    ::godot::global::godot_warn!(#warning_message);
-                    #are_all_oneditor_fields_valid = false;
+                    uninitialized_fields.push(#field_name_str);
                 }
             }
         })
         .collect::<Vec<_>>();
 
     if !on_editor_fields_checks.is_empty() {
+        let class_name_str = class_name.to_string();
+
         quote! {
-            // Triggers `clippy::useless_let_if_seq` lint if only one `#on_editor_fields_checks` is present.
-            #[allow(clippy::useless_let_if_seq)]
-            fn __are_oneditor_fields_initalized(this: &#class_name) -> bool {
+            fn __check_oneditor_fields(this: &#class_name) {
                 // Early return for `#[class(tool)]`.
                 if #is_in_editor {
-                    return true;
+                    return;
                 }
 
-                let mut #are_all_oneditor_fields_valid: bool = true;
+                let mut uninitialized_fields: Vec<&str> = Vec::new();
 
                 #( #on_editor_fields_checks )*
 
-                #are_all_oneditor_fields_valid
+                if !uninitialized_fields.is_empty() {
+                    panic!(
+                        "{}::ready(): OnEditor fields not initialized: {}",
+                        #class_name_str,
+                        uninitialized_fields.join(", "),
+                    );
+                }
             }
 
-            if !__are_oneditor_fields_initalized(&self) {
-                panic!("OnEditor fields must be properly initialized before ready.")
-            }
+            __check_oneditor_fields(&self);
         }
     } else {
         TokenStream::new()
