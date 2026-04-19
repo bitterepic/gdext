@@ -10,8 +10,8 @@ use std::path::Path;
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
-use crate::generator::functions_common;
-use crate::generator::functions_common::{FnCode, FnReceiver};
+use crate::generator::functions_common::{FnCode, FnMeta, FnReceiver};
+use crate::generator::{docs, functions_common};
 use crate::models::domain::{ExtensionApi, Function, UtilityFunction};
 use crate::{SubmitFn, util};
 
@@ -66,6 +66,10 @@ pub(crate) fn make_utility_function_definition(function: &UtilityFunction) -> To
         )
     };
 
+    let extra_docs = docs::make_utility_fn_doc(function_name_str)
+        .map(|note| quote! { #[doc = #note] })
+        .unwrap_or_default();
+
     let definition = functions_common::make_function_definition(
         function,
         &FnCode {
@@ -75,7 +79,10 @@ pub(crate) fn make_utility_function_definition(function: &UtilityFunction) -> To
             is_virtual_required: false,
             is_varcall_fallible: false,
         },
-        &TokenStream::new(),
+        &FnMeta {
+            cfg_attributes: TokenStream::new(),
+            specific_docs: extra_docs,
+        },
     );
 
     // Utility functions have no builders.

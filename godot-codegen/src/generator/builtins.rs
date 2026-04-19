@@ -11,7 +11,7 @@ use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
 use crate::context::Context;
-use crate::generator::functions_common::{FnCode, FnDefinition, FnDefinitions};
+use crate::generator::functions_common::{FnCode, FnDefinition, FnDefinitions, FnMeta};
 use crate::generator::method_tables::MethodTableKey;
 use crate::generator::{enums, functions_common};
 use crate::models::domain::{
@@ -322,6 +322,6 @@ fn make_builtin_method_definition(
             is_virtual_required: false,
             is_varcall_fallible: false,
         },
-        &TokenStream::new(),
+        &FnMeta::default(),
     )
 }

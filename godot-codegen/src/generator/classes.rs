@@ -11,7 +11,7 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
 use crate::context::{Context, NotificationEnum};
-use crate::generator::functions_common::{FnCode, FnDefinition, FnDefinitions};
+use crate::generator::functions_common::{FnCode, FnDefinition, FnDefinitions, FnMeta};
 use crate::generator::method_tables::MethodTableKey;
 use crate::generator::{
     constants, docs, enums, functions_common, notifications, signals, virtual_traits,
@@ -626,6 +626,7 @@ fn make_class_method_definition(
         )
     };
 
+    let cfg_attributes1 = cfg_attributes.clone();
     functions_common::make_function_definition(
         method,
         &FnCode {
@@ -635,6 +636,9 @@ fn make_class_method_definition(
             is_virtual_required: false,
             is_varcall_fallible: true,
         },
-        cfg_attributes,
+        &FnMeta {
+            cfg_attributes: cfg_attributes1,
+            specific_docs: TokenStream::new(),
+        },
     )
 }

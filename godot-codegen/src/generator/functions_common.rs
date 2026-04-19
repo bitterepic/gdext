@@ -47,6 +47,15 @@ pub struct FnCode {
     pub is_varcall_fallible: bool,
 }
 
+/// Item-level decoration for generated functions: conditional compilation and manual doc additions.
+#[derive(Default)]
+pub struct FnMeta {
+    /// `#[cfg(...)]` attributes gating compilation of the function (and related builder items).
+    pub cfg_attributes: TokenStream,
+    /// Extra `#[doc = "..."]` attributes appended to the Godot-provided documentation. Empty if no additions.
+    pub specific_docs: TokenStream,
+}
+
 pub struct FnDefinition {
     pub functions: TokenStream,
     pub builders: TokenStream,
@@ -100,11 +109,7 @@ pub struct FnParamTokens {
     pub arg_exprs: Vec<TokenStream>,
 }
 
-pub fn make_function_definition(
-    sig: &dyn Function,
-    code: &FnCode,
-    cfg_attributes: &TokenStream,
-) -> FnDefinition {
+pub fn make_function_definition(sig: &dyn Function, code: &FnCode, meta: &FnMeta) -> FnDefinition {
     let has_default_params = default_parameters::function_uses_default_params(sig);
     let vis = if has_default_params {
         // Public API mapped by separate function.
@@ -162,7 +167,7 @@ pub fn make_function_definition(
                 sig,
                 code,
                 &primary_fn_name,
-                cfg_attributes,
+                meta,
             );
     } else {
         primary_fn_name = rust_function_name.clone();
@@ -171,6 +176,7 @@ pub fn make_function_definition(
     };
 
     let (maybe_deprecated, _maybe_expect_deprecated) = make_deprecation_attribute(sig);
+    let maybe_specific_doc = &meta.specific_docs;
 
     let call_sig_decl = {
         let return_ty = &sig.return_value().type_tokens();
@@ -194,6 +200,7 @@ pub fn make_function_definition(
 
         quote! {
             #maybe_deprecated
+            #maybe_specific_doc
             #maybe_safety_doc
             #maybe_unsafe fn #primary_fn_name (
                 #receiver_param
@@ -210,6 +217,7 @@ pub fn make_function_definition(
         if !code.is_varcall_fallible {
             quote! {
                 #maybe_deprecated
+                #maybe_specific_doc
                 #maybe_safety_doc
                 #vis #maybe_unsafe fn #primary_fn_name (
                     #receiver_param
@@ -240,6 +248,7 @@ pub fn make_function_definition(
 
             quote! {
                 #maybe_deprecated
+                #maybe_specific_doc
                 /// # Panics
                 /// This is a _varcall_ method, meaning parameters and return values are passed as `Variant`.
                 /// It can detect call failures and will panic in such a case.
@@ -280,6 +289,7 @@ pub fn make_function_definition(
 
         quote! {
             #maybe_deprecated
+            #maybe_specific_doc
             #maybe_safety_doc
             #vis #maybe_unsafe fn #primary_fn_name  (
                 #receiver_param

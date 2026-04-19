@@ -11,7 +11,7 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{ToTokens, quote};
 
 use crate::context::Context;
-use crate::generator::functions_common::FnCode;
+use crate::generator::functions_common::{FnCode, FnMeta};
 use crate::generator::{docs, functions_common};
 use crate::models::domain::{
     ApiView, Class, ClassLike, ClassMethod, FnQualifier, Function, TyName, VirtualMethodPresence,
@@ -241,7 +241,7 @@ fn make_virtual_method(
             is_virtual_required,
             is_varcall_fallible: true,
         },
-        &TokenStream::new(),
+        &FnMeta::default(),
     );
 
     // Virtual methods have no builders.
