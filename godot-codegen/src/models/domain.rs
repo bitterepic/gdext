@@ -18,7 +18,7 @@ use quote::{ToTokens, format_ident, quote};
 
 use crate::context::Context;
 use crate::conv;
-use crate::models::json::{JsonBuiltinClass, JsonMethodArg, JsonMethodReturn};
+use crate::models::api_json::{JsonBuiltinClass, JsonMethodArg, JsonMethodReturn};
 use crate::util::{ident, option_as_slice, safe_ident};
 
 mod enums;

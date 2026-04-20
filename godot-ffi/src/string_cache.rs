@@ -45,10 +45,8 @@ impl<'a> StringCache<'a> {
 
         // Construct StringName directly from C string (possible since Godot 4.2).
         unsafe {
-            let string_name_new_with_utf8_chars_and_len = self
-                .interface
-                .string_name_new_with_utf8_chars_and_len
-                .unwrap_unchecked();
+            let string_name_new_with_utf8_chars_and_len =
+                self.interface.string_name_new_with_utf8_chars_and_len;
 
             // Construct StringName from string (non-static, we only need them during the cache's lifetime).
             // There is no _latin_*() variant that takes length, so we have to use _utf8_*() instead.

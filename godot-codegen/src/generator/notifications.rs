@@ -9,8 +9,8 @@ use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
 use crate::context::Context;
+use crate::models::api_json::JsonClassConstant;
 use crate::models::domain::TyName;
-use crate::models::json::JsonClassConstant;
 use crate::util;
 
 pub fn make_notify_methods(class_name: &TyName, ctx: &mut Context) -> TokenStream {

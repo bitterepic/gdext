@@ -24,7 +24,7 @@ rust-version = "1.94"
 # regular dependencies. Sort alphabetically within each section; comments about a dependency come on the section header.
 [workspace.dependencies]
 # Related to godot-rust.
-gdextension-api = { version = "0.4.0", git = "https://github.com/godot-rust/godot4-prebuilt", branch = "release-v0.4" }
+gdextension-api = { version = "0.5.0", git = "https://github.com/godot-rust/godot4-prebuilt", branch = "release-v0.5" }
 
 # Main library features.
 glam = { version = "0.32", features = ["debug-glam-assert"] }
@@ -34,7 +34,6 @@ serde_json = "1"
 # Related to tooling/build setup.
 # * regex: not used for unicode parsing -> features unicode-bool + unicode-gencat are enabled instead of unicode-perl.
 #          'unicode-gencat' needed for \d, see https://docs.rs/regex/latest/regex/#unicode-features.
-bindgen = { version = "0.72.1", default-features = false, features = ["runtime"] }
 libc = "0.2.183"
 regex = { version = "1.12", default-features = false, features = ["std", "unicode-bool", "unicode-gencat"] }
 which = "8"

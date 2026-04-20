@@ -12,6 +12,7 @@ use quote::quote;
 use crate::SubmitFn;
 use crate::context::Context;
 use crate::models::domain::{ClassCodegenLevel, ExtensionApi};
+use crate::models::header_json::HeaderJson;
 
 pub mod builtins;
 pub mod central_files;
@@ -20,9 +21,9 @@ pub mod constants;
 pub mod default_parameters;
 pub mod docs;
 pub mod enums;
-pub mod extension_interface;
 pub mod functions_common;
 pub mod gdext_build_struct;
+pub mod header_codegen;
 pub mod import_docs;
 pub mod lifecycle_builtins;
 pub mod method_tables;
@@ -56,7 +57,6 @@ pub fn generate_sys_module_file(sys_gen_path: &Path, submit_fn: &mut SubmitFn) {
 
         pub mod central;
         pub mod gdextension_interface;
-        pub mod interface;
     };
 
     submit_fn(sys_gen_path.join("mod.rs"), code);
@@ -70,6 +70,19 @@ pub fn generate_sys_central_file(
     let sys_code = central_files::make_sys_central_code(api);
 
     submit_fn(sys_gen_path.join("central.rs"), sys_code);
+}
+
+/// Generate the `gdextension_interface.rs` module from JSON.
+///
+/// Produces all type definitions, per-interface-function typedefs, the `GDExtensionInterface` struct,
+/// and its `load()` impl.
+pub fn generate_sys_gdextension_interface_file(
+    header: &HeaderJson,
+    sys_gen_path: &Path,
+    submit_fn: &mut SubmitFn,
+) {
+    let code = header_codegen::generate_sys_gdextension_interface_from_json(header);
+    submit_fn(sys_gen_path.join("gdextension_interface.rs"), code);
 }
 
 pub fn generate_sys_classes_file(

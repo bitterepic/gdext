@@ -34,10 +34,12 @@ use quote::quote;
 
 use crate::Context;
 use crate::conv::to_enum_type_uncached;
+use crate::models::api_json::{
+    JsonBuiltinMethod, JsonClassMethod, JsonSignal, JsonUtilityFunction,
+};
 use crate::models::domain::{
     ClassCodegenLevel, Enum, EnumReplacements, RustTy, TyName, VirtualMethodPresence,
 };
-use crate::models::json::{JsonBuiltinMethod, JsonClassMethod, JsonSignal, JsonUtilityFunction};
 use crate::special_cases::codegen_special_cases;
 use crate::util::option_as_slice;
 

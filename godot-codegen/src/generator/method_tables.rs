@@ -35,12 +35,12 @@ pub fn make_builtin_lifecycle_table(api: &ExtensionApi) -> TokenStream {
             interface: &crate::GDExtensionInterface,
         },
         pre_init_code: quote! {
-            let get_construct_fn = interface.variant_get_ptr_constructor.unwrap();
-            let get_destroy_fn = interface.variant_get_ptr_destructor.unwrap();
-            let get_operator_fn = interface.variant_get_ptr_operator_evaluator.unwrap();
+            let get_construct_fn = interface.variant_get_ptr_constructor;
+            let get_destroy_fn = interface.variant_get_ptr_destructor;
+            let get_operator_fn = interface.variant_get_ptr_operator_evaluator;
 
-            let get_to_variant_fn = interface.get_variant_from_type_constructor.unwrap();
-            let get_from_variant_fn = interface.get_variant_to_type_constructor.unwrap();
+            let get_to_variant_fn = interface.get_variant_from_type_constructor;
+            let get_from_variant_fn = interface.get_variant_to_type_constructor;
         },
         method_decls: Vec::with_capacity(len),
         method_inits: Vec::with_capacity(len),
@@ -98,7 +98,7 @@ pub fn make_class_method_table(
         .for_each(|c| populate_class_methods(&mut table, c, ctx));
 
     table.pre_init_code = quote! {
-        let fetch_fptr = interface.classdb_get_method_bind.expect("classdb_get_method_bind absent");
+        let fetch_fptr = interface.classdb_get_method_bind;
     };
 
     make_method_table(table)
@@ -113,7 +113,7 @@ pub fn make_builtin_method_table(api: &ExtensionApi, ctx: &mut Context) -> Token
             string_names: &mut crate::StringCache,
         },
         pre_init_code: quote! {
-            let fetch_fptr = interface.variant_get_ptr_builtin_method.expect("variant_get_ptr_builtin_method absent");
+            let fetch_fptr = interface.variant_get_ptr_builtin_method;
         },
         fptr_type: quote! { crate::BuiltinMethodBind },
         fetch_fptr_type: quote! { crate::GDExtensionInterfaceVariantGetPtrBuiltinMethod },
@@ -151,8 +151,7 @@ pub fn make_utility_function_table(api: &ExtensionApi) -> TokenStream {
             string_names: &mut crate::StringCache,
         },
         pre_init_code: quote! {
-            let get_utility_fn = interface.variant_get_ptr_utility_function
-                .expect("variant_get_ptr_utility_function absent");
+            let get_utility_fn = interface.variant_get_ptr_utility_function;
         },
         method_decls: vec![],
         method_inits: vec![],
@@ -377,7 +376,7 @@ fn make_method_table(info: IndexedMethodTable) -> TokenStream {
     quote! {
         #imports
 
-        type FetchFn = <#fetch_fptr_type as crate::Inner>::FnPtr;
+        type FetchFn = #fetch_fptr_type;
 
         pub struct #table_name {
             function_pointers: Vec<#fptr_type>,

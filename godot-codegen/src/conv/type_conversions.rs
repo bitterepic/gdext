@@ -67,7 +67,7 @@ fn to_hardcoded_rust_ident(full_ty: &GodotTy) -> Option<Ident> {
             None => "_unused__Dictionary_must_not_appear_in_idents",
         },
 
-        // Types needed for native structures mapping
+        // Types needed for native structures mapping; duplicated in header_codegen.rs map_c_type().
         ("uint8_t", None) => "u8",
         ("uint16_t", None) => "u16",
         ("uint32_t", None) => "u32",
@@ -202,6 +202,9 @@ fn to_rust_type_uncached(full_ty: &GodotTy, ctx: &mut Context) -> RustTy {
             TyName::from_godot(ty).rust_ty
         }
     }
+
+    // Code duplication: pointer parsing logic - generator/header_codegen.rs::map_c_type().
+    // Future refactoring: extract C type parsing to dedicated file.
 
     if ty.ends_with('*') {
         // Pointer type; strip '*', see if const, and then resolve the inner type.

@@ -28,9 +28,8 @@ api-4-6 = []
 
 default = []
 
-api-custom = ["dep:bindgen", "dep:regex", "dep:which"]
-api-custom-json = ["dep:nanoserde", "dep:bindgen", "dep:regex", "dep:which"]
-api-custom-extheader = []
+api-custom = ["dep:regex", "dep:which"]
+api-custom-json = ["dep:nanoserde", "dep:which"]
 
 # Safeguard levels (see godot/lib.rs for detailed documentation).
 safeguards-dev-balanced = []
@@ -39,7 +38,6 @@ safeguards-release-disengaged = []
 [dependencies]
 gdextension-api = { workspace = true }
 
-bindgen = { workspace = true, optional = true }
 regex = { workspace = true, optional = true }
 which = { workspace = true, optional = true }
 # Required by `api-custom-json` to parse the extension API JSON (to get the Godot version).

@@ -31,16 +31,17 @@ use proc_macro2::TokenStream;
 use crate::context::Context;
 use crate::generator::builtins::generate_builtin_class_files;
 use crate::generator::classes::generate_class_files;
-use crate::generator::extension_interface::generate_sys_interface_file;
 use crate::generator::native_structures::generate_native_structures_files;
 use crate::generator::utility_functions::generate_utilities_file;
 use crate::generator::{
     generate_core_central_file, generate_core_mod_file, generate_sys_builtin_lifecycle_file,
     generate_sys_builtin_methods_file, generate_sys_central_file, generate_sys_classes_file,
-    generate_sys_module_file, generate_sys_utilities_file, virtual_definitions,
+    generate_sys_gdextension_interface_file, generate_sys_module_file, generate_sys_utilities_file,
+    virtual_definitions,
 };
+use crate::models::api_json::{JsonExtensionApi, load_extension_api};
 use crate::models::domain::{ApiView, ExtensionApi};
-use crate::models::json::{JsonExtensionApi, load_extension_api};
+use crate::models::header_json::HeaderJson;
 
 pub type SubmitFn = dyn FnMut(PathBuf, TokenStream);
 
@@ -104,11 +105,7 @@ mod rustfmt {
 #[cfg(feature = "codegen-rustfmt")]
 pub(crate) use rustfmt::*;
 
-pub fn generate_sys_files(
-    sys_gen_path: &Path,
-    h_path: &Path,
-    watch: &mut godot_bindings::StopWatch,
-) {
+pub fn generate_sys_files(sys_gen_path: &Path, watch: &mut godot_bindings::StopWatch) {
     let json_api = load_extension_api(watch);
 
     let mut ctx = Context::build_from_api(&json_api);
@@ -132,8 +129,10 @@ pub fn generate_sys_files(
     generate_sys_utilities_file(&api, sys_gen_path, &mut submit_fn);
     watch.record("generate_utilities_file");
 
-    generate_sys_interface_file(h_path, sys_gen_path, &mut submit_fn);
-    watch.record("generate_interface_file");
+    let header_json = load_header_json(watch);
+    watch.record("load_header_json");
+    generate_sys_gdextension_interface_file(&header_json, sys_gen_path, &mut submit_fn);
+    watch.record("generate_gdextension_interface_file");
 
     generate_sys_module_file(sys_gen_path, &mut submit_fn);
     watch.record("generate_module_file");
@@ -143,6 +142,13 @@ pub fn generate_sys_files(
         rustfmt_files();
         watch.record("rustfmt");
     }
+}
+
+fn load_header_json(watch: &mut godot_bindings::StopWatch) -> HeaderJson {
+    let json_str = godot_bindings::load_gdextension_interface_json(watch);
+
+    nanoserde::DeJson::deserialize_json(json_str.as_ref())
+        .unwrap_or_else(|e| panic!("failed to deserialize gdextension_interface.json;\n\t{e}"))
 }
 
 pub fn generate_core_files(core_gen_path: &Path) {
