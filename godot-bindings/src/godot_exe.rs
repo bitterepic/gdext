@@ -155,7 +155,9 @@ fn dump_extension_api(godot_bin: &Path, out_file: &Path) {
     let mut cmd = Command::new(godot_bin);
     cmd.current_dir(cwd)
         .arg("--headless")
-        .arg("--dump-extension-api");
+        // Available since Godot 4.2
+        // See: https://github.com/godotengine/godot/pull/82331
+        .arg("--dump-extension-api-with-docs");
 
     execute(cmd, "dump Godot JSON file");
     println!("Generated {}/extension_api.json.", cwd.display());

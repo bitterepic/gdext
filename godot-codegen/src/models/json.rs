@@ -81,6 +81,8 @@ pub struct JsonClass {
     pub methods: Option<Vec<JsonClassMethod>>,
     // pub properties: Option<Vec<Property>>,
     pub signals: Option<Vec<JsonSignal>>,
+    // Not all extensions declare a description field.
+    pub description: Option<String>,
 }
 
 #[derive(DeJson)]

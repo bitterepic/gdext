@@ -135,6 +135,9 @@ impl Class {
             .as_ref()
             .map(|godot_name| TyName::from_godot(godot_name));
 
+        // TODO(v0.6): find a better way than cloning (borrow, swap, ...).
+        let description = json.description.clone();
+
         Some(Self {
             common: ClassCommons {
                 name: ty_name,
@@ -150,6 +153,7 @@ impl Class {
             enums,
             methods,
             signals,
+            description,
         })
     }
 }

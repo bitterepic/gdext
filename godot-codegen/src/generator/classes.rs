@@ -110,6 +110,14 @@ fn make_class(class: &Class, ctx: &mut Context, view: &ApiView) -> GeneratedClas
     let mut extended_class_doc = construct_doc.replace("Self", &class_name.rust_ty.to_string());
     extended_class_doc.push_str(final_doc.unwrap_or_default());
 
+    if let Some(description) = &class.description
+        && !description.is_empty()
+    {
+        extended_class_doc.push_str("\n# Godot docs\n");
+        let imported_doc = super::import_docs::import_class_docs(description, class, ctx, view);
+        extended_class_doc.push_str(&imported_doc);
+    }
+
     let api_level = class.api_level;
     let init_level = api_level.to_init_level();
 

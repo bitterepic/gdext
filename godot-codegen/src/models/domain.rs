@@ -67,6 +67,10 @@ impl<'a> ApiView<'a> {
             .get(ty)
             .unwrap_or_else(|| panic!("specified type `{}` is not an engine class", ty.godot_ty))
     }
+
+    pub fn find_engine_class(&self, ty: &TyName) -> Option<&'a Class> {
+        self.class_by_ty.get(ty).cloned()
+    }
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------
@@ -169,6 +173,7 @@ pub struct Class {
     pub enums: Vec<Enum>,
     pub methods: Vec<ClassMethod>,
     pub signals: Vec<ClassSignal>,
+    pub description: Option<String>,
 }
 
 impl ClassLike for Class {
