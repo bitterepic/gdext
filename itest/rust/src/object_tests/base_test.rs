@@ -186,6 +186,20 @@ fn base_refcounted_weak_reference() {
     );
 }
 
+#[itest]
+#[cfg(since_api = "4.7")]
+fn base_can_be_used_in_init() {
+    // Before Godot 4.7 our RefCounted `base` was coming in uninitialized.
+    // Increasing and decreasing refcount was resulting in freeing an instance.
+    let obj = Gd::from_init_fn(|base| {
+        let instance = RefcBased { base };
+        drop(instance.base().clone());
+        instance
+    });
+    // Since Godot 4.7 such operations are totally legal :).
+    assert!(obj.is_instance_valid());
+}
+
 fn create_object_with_extracted_base() -> (Gd<Baseless>, Base<Node2D>) {
     let mut extracted_base = None;
     let obj = Baseless::smuggle_out(&mut extracted_base);
@@ -298,7 +312,10 @@ impl RefcBased {
     pub fn create_one() -> Gd<Self> {
         Gd::from_init_fn(|base| Self { base })
     }
+}
 
+#[cfg(before_api = "4.7")]
+impl RefcBased {
     /// Used in `base_init_test.rs` to test that a base pointer can be extracted during initialization.
     pub fn split_simple() -> (Gd<Self>, Gd<RefCounted>) {
         let mut moved_out = None;

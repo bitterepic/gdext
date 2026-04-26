@@ -160,7 +160,7 @@ where
         let object_ptr = callbacks::create_custom(init, true) // or propagate panic.
             .unwrap_or_else(|payload| PanicPayload::repanic(payload));
 
-        unsafe { Gd::from_obj_sys(object_ptr) }
+        unsafe { Gd::from_constructed_obj_sys(object_ptr) }
     }
 
     /// Moves a user-created object into this smart pointer, submitting ownership to the Godot engine.
@@ -539,7 +539,7 @@ impl<T: GodotClass> Gd<T> {
             #[cfg(before_api = "4.4")]
             let object_ptr = callbacks::create::<T>(std::ptr::null_mut());
 
-            Gd::from_obj_sys(object_ptr)
+            Gd::from_constructed_obj_sys(object_ptr)
         }
     }
 
@@ -595,6 +595,32 @@ impl<T: GodotClass> Gd<T> {
         F: 'static + FnMut(&[&Variant]) -> R,
     {
         Callable::from_linked_fn(method_name, self, rust_function)
+    }
+
+    /// Used by caller to transform pointer of freshly created instance into `Gd<T>`. This is default in most initializations from FFI.
+    ///
+    /// Before 4.7 Godot (including GDExtension layer) returns not fully-initialized instance and initializing it is a caller
+    /// responsibility, which is done with [`Self::from_obj_sys`].
+    ///
+    /// After 4.7 Godot (and GDExtension layer too) returns fully-initialized instance to the caller, and [`Self::from_obj_sys_weak`]
+    /// is used instead.
+    ///
+    /// In other words, before 4.7 it was something along the lines of:
+    /// construct base -> do init/postinit -> CALLER initializes instance
+    ///
+    /// While afterwards we ended with:
+    /// construct initialized base -> do init/postinit -> CALLER receives initialized instance.
+    ///
+    /// # Safety
+    /// `ptr` must point to a valid object of this type.
+    pub(crate) unsafe fn from_constructed_obj_sys(ptr: sys::GDExtensionObjectPtr) -> Self {
+        #[cfg(before_api = "4.7")]
+        let obj = unsafe { Gd::<T>::from_obj_sys(ptr) };
+
+        #[cfg(since_api = "4.7")]
+        let obj = unsafe { Gd::<T>::from_obj_sys_weak(ptr) };
+
+        obj
     }
 
     pub(crate) unsafe fn from_obj_sys_or_none(

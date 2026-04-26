@@ -10,7 +10,7 @@ use godot::builtin::real_consts::FRAC_PI_3;
 use godot::classes::notify::ObjectNotification;
 use godot::classes::{ClassDb, IRefCounted, RefCounted};
 use godot::meta::ToGodot;
-use godot::obj::{Base, Gd, InstanceId, NewGd, Singleton, WithBaseField};
+use godot::obj::{Base, Gd, NewGd, Singleton, WithBaseField};
 use godot::register::{GodotClass, godot_api};
 use godot::task::TaskHandle;
 
@@ -97,83 +97,124 @@ fn base_init_refcounted_simple() {
     });
 }
 
-// Tests that the auto-decrement of surplus references also works when instantiated through the engine.
-#[itest(async)]
-fn base_init_refcounted_from_engine() -> TaskHandle {
-    let db = ClassDb::singleton();
-    let obj = db.instantiate("RefcBased").to::<Gd<RefcBased>>();
+#[cfg(before_api = "4.7")]
+mod refcount_tests {
+    use godot::obj::InstanceId;
 
-    assert_eq!(obj.get_reference_count(), 2);
-    next_frame(move || assert_eq!(obj.get_reference_count(), 1, "eventual dec-ref happens"))
-}
+    use super::*;
 
-#[itest(async)]
-fn base_init_refcounted_from_rust() -> TaskHandle {
-    let obj = RefcBased::new_gd();
+    // Tests that the auto-decrement of surplus references also works when instantiated through the engine.
+    #[itest(async)]
+    fn base_init_refcounted_from_engine() -> TaskHandle {
+        let db = ClassDb::singleton();
+        let obj = db.instantiate("RefcBased").to::<Gd<RefcBased>>();
 
-    assert_eq!(obj.get_reference_count(), 2);
-    next_frame(move || assert_eq!(obj.get_reference_count(), 1, "eventual dec-ref happens"))
-}
+        assert_eq!(obj.get_reference_count(), 2);
+        next_frame(move || assert_eq!(obj.get_reference_count(), 1, "eventual dec-ref happens"))
+    }
 
-#[itest(async)]
-fn base_init_refcounted_complex() -> TaskHandle {
-    // Instantiate with multiple Gd<T> references.
-    let id_simple = verify_complex_init(RefcBased::split_simple());
-    let id_intermixed = verify_complex_init(RefcBased::split_intermixed());
+    #[itest(async)]
+    fn base_init_refcounted_from_rust() -> TaskHandle {
+        let obj = RefcBased::new_gd();
 
-    next_frame(move || {
-        assert!(!id_simple.lookup_validity(), "object destroyed eventually");
-        assert!(
-            !id_intermixed.lookup_validity(),
-            "object destroyed eventually"
-        );
-    })
-}
+        assert_eq!(obj.get_reference_count(), 2);
+        next_frame(move || assert_eq!(obj.get_reference_count(), 1, "eventual dec-ref happens"))
+    }
 
-fn verify_complex_init((obj, base): (Gd<RefcBased>, Gd<RefCounted>)) -> InstanceId {
-    let id = obj.instance_id();
+    #[itest(async)]
+    fn base_init_refcounted_complex() -> TaskHandle {
+        // Instantiate with multiple Gd<T> references.
+        let id_simple = verify_complex_init(RefcBased::split_simple());
+        let id_intermixed = verify_complex_init(RefcBased::split_intermixed());
 
-    assert_eq!(obj.instance_id(), base.instance_id());
-    assert_eq!(base.get_reference_count(), 3);
-    assert_eq!(obj.get_reference_count(), 3);
+        next_frame(move || {
+            assert!(!id_simple.lookup_validity(), "object destroyed eventually");
+            assert!(
+                !id_intermixed.lookup_validity(),
+                "object destroyed eventually"
+            );
+        })
+    }
 
-    drop(base);
-    assert_eq!(obj.get_reference_count(), 2);
-    assert_eq!(obj.get_reference_count(), 2);
-    drop(obj);
+    fn verify_complex_init((obj, base): (Gd<RefcBased>, Gd<RefCounted>)) -> InstanceId {
+        let id = obj.instance_id();
 
-    // Not dead yet.
-    assert!(id.lookup_validity(), "object retained (dec-ref deferred)");
-    id
-}
+        assert_eq!(obj.instance_id(), base.instance_id());
+        assert_eq!(base.get_reference_count(), 3);
+        assert_eq!(obj.get_reference_count(), 3);
 
-#[cfg(safeguards_strict)]
-#[itest]
-fn base_init_outside_init() {
-    use godot::obj::NewAlloc;
-    let mut obj = Based::new_alloc();
+        drop(base);
+        assert_eq!(obj.get_reference_count(), 2);
+        assert_eq!(obj.get_reference_count(), 2);
+        drop(obj);
 
-    expect_panic("to_init_gd() outside init() function", || {
-        let guard = obj.bind_mut();
-        let _gd = guard.base.to_init_gd(); // Panics in strict safeguard mode.
-    });
+        // Not dead yet.
+        assert!(id.lookup_validity(), "object retained (dec-ref deferred)");
+        id
+    }
 
-    obj.free();
-}
+    #[cfg(safeguards_strict)]
+    #[itest]
+    fn base_init_outside_init() {
+        use godot::obj::NewAlloc;
+        let mut obj = Based::new_alloc();
 
-#[cfg(safeguards_strict)]
-#[itest]
-fn base_init_to_gd() {
-    expect_panic("WithBaseField::to_gd() inside init() function", || {
-        let _obj = Gd::<Based>::from_init_fn(|base| {
-            let temp_obj = Based { base, i: 999 };
-
-            // Call to self.to_gd() during initialization should panic in strict safeguard mode.
-            let _gd = godot::obj::WithBaseField::to_gd(&temp_obj);
-
-            temp_obj
+        expect_panic("to_init_gd() outside init() function", || {
+            let guard = obj.bind_mut();
+            let _gd = guard.base.to_init_gd(); // Panics in strict safeguard mode.
         });
-    });
+
+        obj.free();
+    }
+
+    #[cfg(safeguards_strict)]
+    #[itest]
+    fn base_init_to_gd() {
+        expect_panic("WithBaseField::to_gd() inside init() function", || {
+            let _obj = Gd::<Based>::from_init_fn(|base| {
+                let temp_obj = Based { base, i: 999 };
+
+                // Call to self.to_gd() during initialization should panic in strict safeguard mode.
+                let _gd = godot::obj::WithBaseField::to_gd(&temp_obj);
+
+                temp_obj
+            });
+        });
+    }
+}
+
+#[cfg(since_api = "4.7")]
+mod refcount_tests {
+    use super::*;
+
+    #[itest(async)]
+    fn base_init_refcounted_from_engine() -> TaskHandle {
+        let db = ClassDb::singleton();
+        let obj = db.instantiate("RefcBased").to::<Gd<RefcBased>>();
+
+        assert_eq!(obj.get_reference_count(), 1);
+        let instance_id = obj.instance_id();
+        next_frame(move || {
+            assert!(
+                !instance_id.lookup_validity(),
+                "properly freed at this point"
+            )
+        })
+    }
+
+    #[itest(async)]
+    fn base_init_refcounted_from_rust() -> TaskHandle {
+        let obj = RefcBased::new_gd();
+
+        assert_eq!(obj.get_reference_count(), 1);
+        let instance_id = obj.instance_id();
+        next_frame(move || {
+            assert!(
+                !instance_id.lookup_validity(),
+                "properly freed at this point"
+            )
+        })
+    }
 }
 
 #[derive(GodotClass)]
@@ -193,7 +234,7 @@ impl IRefCounted for RefcPostinit {
     }
 }
 
-#[cfg(since_api = "4.4")]
+#[cfg(all(since_api = "4.4", before_api = "4.7"))]
 #[itest(async)]
 fn base_postinit_refcounted() -> TaskHandle {
     let obj = RefcPostinit::new_gd();

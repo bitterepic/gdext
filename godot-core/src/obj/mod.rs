@@ -24,6 +24,11 @@ mod passive_gd;
 mod raw_gd;
 mod traits;
 
+mod base_init;
+#[cfg(since_api = "4.7")]
+mod base_strong_initialization;
+#[cfg(before_api = "4.7")]
+mod base_weak_initialization;
 pub(crate) mod rtti;
 pub mod signal;
 

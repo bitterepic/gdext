@@ -75,8 +75,10 @@ pub struct ClassMetadata {}
 type GodotCreationInfo = sys::GDExtensionClassCreationInfo2;
 #[cfg(all(since_api = "4.3", before_api = "4.4"))]
 type GodotCreationInfo = sys::GDExtensionClassCreationInfo3;
-#[cfg(since_api = "4.4")]
+#[cfg(all(since_api = "4.4", before_api = "4.7"))]
 type GodotCreationInfo = sys::GDExtensionClassCreationInfo4;
+#[cfg(since_api = "4.7")]
+type GodotCreationInfo = sys::GDExtensionClassCreationInfo6;
 
 #[cfg(before_api = "4.4")]
 pub(crate) type GodotGetVirtual = <sys::GDExtensionClassGetVirtual as sys::Inner>::FnPtr;
@@ -583,8 +585,11 @@ fn register_class_raw(mut info: ClassRegistrationInfo) {
         #[cfg(all(since_api = "4.3", before_api = "4.4"))]
         let register_fn = interface_fn!(classdb_register_extension_class3);
 
-        #[cfg(since_api = "4.4")]
+        #[cfg(all(since_api = "4.4", before_api = "4.7"))]
         let register_fn = interface_fn!(classdb_register_extension_class4);
+
+        #[cfg(since_api = "4.7")]
+        let register_fn = interface_fn!(classdb_register_extension_class6);
 
         let _: () = register_fn(
             sys::get_library(),
@@ -759,11 +764,40 @@ fn default_creation_info() -> sys::GDExtensionClassCreationInfo3 {
     }
 }
 
-#[cfg(since_api = "4.4")]
+#[cfg(all(since_api = "4.4", before_api = "4.7"))]
 fn default_creation_info() -> sys::GDExtensionClassCreationInfo4 {
     sys::GDExtensionClassCreationInfo4 {
-        is_virtual: false as u8,
-        is_abstract: false as u8,
+        is_virtual: sys::conv::SYS_FALSE,
+        is_abstract: sys::conv::SYS_FALSE,
+        is_exposed: sys::conv::SYS_TRUE,
+        is_runtime: sys::conv::SYS_TRUE,
+        icon_path: ptr::null(),
+        set_func: None,
+        get_func: None,
+        get_property_list_func: None,
+        free_property_list_func: None,
+        property_can_revert_func: None,
+        property_get_revert_func: None,
+        validate_property_func: None,
+        notification_func: None,
+        to_string_func: None,
+        reference_func: None,
+        unreference_func: None,
+        create_instance_func: None,
+        free_instance_func: None,
+        recreate_instance_func: None,
+        get_virtual_func: None,
+        get_virtual_call_data_func: None,
+        call_virtual_with_data_func: None,
+        class_userdata: ptr::null_mut(),
+    }
+}
+
+#[cfg(since_api = "4.7")]
+fn default_creation_info() -> sys::GDExtensionClassCreationInfo6 {
+    sys::GDExtensionClassCreationInfo6 {
+        is_virtual: sys::conv::SYS_FALSE,
+        is_abstract: sys::conv::SYS_FALSE,
         is_exposed: sys::conv::SYS_TRUE,
         is_runtime: sys::conv::SYS_TRUE,
         icon_path: ptr::null(),
