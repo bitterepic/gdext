@@ -11,7 +11,9 @@ use crate::meta::error::{
     CallError, CallOutcome, ConvertError, ErrorKind, ErrorToGodot, FromFfiError,
 };
 use crate::meta::shape::GodotShape;
-use crate::meta::{Element, FromGodot, GodotConvert, GodotNullableType, GodotType, ToGodot};
+use crate::meta::{
+    Element, EngineToGodot, FromGodot, GodotConvert, GodotNullableType, GodotType, ToGodot,
+};
 use crate::registry::info::ParamMetadata;
 
 // The following ToGodot/FromGodot/Convert impls are auto-generated for each engine type, co-located with their definitions:
@@ -163,50 +165,54 @@ where
     }
 }
 
-impl<T, E> ToGodot for Result<T, E>
+impl<T, E> EngineToGodot for Result<T, E>
 where
     T: ToGodot,
     E: ErrorToGodot<T>,
 {
     type Pass = meta::ByValue;
 
-    fn to_godot(&self) -> Self::Via {
-        // Two cases of result_to_godot():
-        // * Return -- pass forward.
-        // * CallFailed -- misuse: #[func] Result<T, E> is mapped in a separate code path; this is only for users
-        //   calling to_godot() manually, so panic.
-        //
-        // Exception safety (see to_variant() comment): this panic is safe because Result<T, E> does not implement Element.
-        // Array::resize() is thus never at risk of calling to_variant() on a Result and leaving the array in an inconsistent state.
-        match E::result_to_godot(self.as_ref()) {
-            CallOutcome::Return(mapped) => mapped.to_godot_owned(),
-            CallOutcome::CallFailed(msg) => panic!("Result::to_godot() called on Err: {msg}"),
-        }
+    fn engine_to_godot(&self) -> meta::ToArg<'_, Self::Via, Self::Pass> {
+        panic_non_consuming()
     }
 
-    // Two __godot_try* overrides are required: one for each calling convention. They can't be merged without sacrificing perf in one of the paths:
-    // - varcall writes a Variant to a GDExtensionVariantPtr. __godot_try_into_variant produces it directly; going through Via first would add
-    //   an intermediate clone for ByRef types.
-    // - ptrcall writes Via to a typed GDExtensionTypePtr. __godot_try_into_godot_owned produces Via directly; going through Variant first
-    //   would require a Variant→Via round-trip.
-    // Both methods also propagate unexpected errors as CallError instead of panicking.
+    fn engine_to_godot_owned(&self) -> Self::Via {
+        panic_non_consuming()
+    }
 
-    fn __godot_try_into_variant(self, call_ctx: &meta::CallContext) -> Result<Variant, CallError> {
-        match E::result_to_godot(self.as_ref()) {
+    fn engine_to_variant(&self) -> Variant {
+        panic_non_consuming()
+    }
+
+    // Varcall and ptrcall each need their own override; merging them would force an extra conversion in one direction.
+    //
+    // Varcall writes a Variant, so engine_try_into_variant produces one directly -- routing through Via first would add a clone for ByRef types.
+    // Ptrcall writes Via, so engine_try_into_godot_owned produces it directly -- routing through Variant would cost a Variant→Via round-trip.
+    //
+    // Both methods also report unexpected errors as CallError rather than panicking.
+
+    fn engine_try_into_variant(self, call_ctx: &meta::CallContext) -> Result<Variant, CallError> {
+        match E::result_to_godot(self) {
             CallOutcome::Return(mapped) => Ok(mapped.to_variant()),
             CallOutcome::CallFailed(msg) => Err(CallError::failed_by_user_result(call_ctx, msg)),
         }
     }
 
-    fn __godot_try_into_godot_owned(
+    fn engine_try_into_godot_owned(
         self,
         call_ctx: &meta::CallContext,
     ) -> Result<Self::Via, CallError> {
-        match E::result_to_godot(self.as_ref()) {
+        match E::result_to_godot(self) {
             CallOutcome::Return(mapped) => Ok(mapped.to_godot_owned()),
             CallOutcome::CallFailed(msg) => Err(CallError::failed_by_user_result(call_ctx, msg)),
         }
     }
+}
+
+fn panic_non_consuming() -> ! {
+    panic!(
+        "Result<T, E> is only valid as a #[func] return value; non-owned conversions unsupported"
+    )
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------

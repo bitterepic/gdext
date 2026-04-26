@@ -140,12 +140,12 @@ impl<E: Into<Box<dyn Error + Send + Sync + 'static>>> From<E> for Unexpected {
 // ----------------------------------------------------------------------------------------------------------------------------------------------
 // ErrorToGodot impl -- unexpected mode
 
-impl<T: ToGodot + Clone> ErrorToGodot<T> for Unexpected {
+impl<T: ToGodot> ErrorToGodot<T> for Unexpected {
     type Mapped = T;
 
-    fn result_to_godot(result: Result<&T, &Self>) -> CallOutcome<T> {
+    fn result_to_godot(result: Result<T, Self>) -> CallOutcome<T> {
         match result {
-            Ok(val) => CallOutcome::Return(val.clone()),
+            Ok(val) => CallOutcome::Return(val),
             Err(e) => CallOutcome::CallFailed(format!("Err(Unexpected) in #[func]: {e}")),
         }
     }

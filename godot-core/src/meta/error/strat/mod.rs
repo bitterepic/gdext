@@ -16,7 +16,7 @@
 //!
 //! | Strategy                                       | `Mapped` type                       | Ok path            | Err path                  | GDScript ergonomics                     |
 //! |------------------------------------------------|-------------------------------------|--------------------|---------------------------|-----------------------------------------|
-//! | [`strat::Unexpected`]<br>Unexpected errors     | `T`                                 | `val.clone()`      | Default or<br>failed call | Sees `T`; `?` works with any `Error`    |
+//! | [`strat::Unexpected`]<br>Unexpected errors     | `T`                                 | `val`              | Default or<br>failed call | Sees `T`; `?` works with any `Error`    |
 //! | `()`<br>Nil on error                           | `Variant`                           | `val.to_variant()` | `null`                    | `if val == null`                        |
 //! | [`global::Error`]<br>Godot error enum          | `global::Error`                     | `OK` constant      | `ERR_*` constant          | `val == OK`                             |
 //! | _(not provided)_<br>`Variant`                  | `Variant`                           | `val.to_variant()` | `err.to_variant()`        | Must check type/value                   |
@@ -29,6 +29,7 @@ mod unexpected;
 pub use unexpected::*;
 
 use super::{CallOutcome, ErrorToGodot};
+use crate::builtin::Variant;
 use crate::global;
 use crate::meta::ToGodot;
 #[expect(unused)] // for docs.
@@ -54,8 +55,8 @@ use crate::meta::error::strat;
 ///     // Returns the high score from a save file, or null if absent or unreadable.
 ///     // A missing file is normal for new players -- GDScript handles null gracefully.
 ///     #[func]
-///     fn load_high_score(&self, save_path: GString) -> Result<i64, ()> {
-///         let text = std::fs::read_to_string(save_path.to_string()).map_err(|_| ())?;
+///     fn load_high_score(&self, save_path: String) -> Result<i64, ()> {
+///         let text = std::fs::read_to_string(save_path).map_err(|_| ())?;
 ///         text.trim().parse::<i64>().map_err(|_| ())
 ///     }
 /// }
@@ -63,17 +64,17 @@ use crate::meta::error::strat;
 ///
 /// GDScript usage:
 /// ```gdscript
-/// var score = player.load_high_score("user://save.dat")
+/// var score = player.load_high_score("user://highscore.dat")
 /// if score == null:
-///     score = 0  # New player, no save file yet.
+///     # New player, no save file yet.
 /// ```
 impl<T: ToGodot> ErrorToGodot<T> for () {
-    type Mapped = crate::builtin::Variant;
+    type Mapped = Variant;
 
-    fn result_to_godot(result: Result<&T, &Self>) -> CallOutcome<crate::builtin::Variant> {
+    fn result_to_godot(result: Result<T, Self>) -> CallOutcome<Variant> {
         match result {
             Ok(val) => CallOutcome::Return(val.to_variant()),
-            Err(()) => CallOutcome::Return(crate::builtin::Variant::nil()),
+            Err(()) => CallOutcome::Return(Variant::nil()),
         }
     }
 }
@@ -86,10 +87,10 @@ impl<T: ToGodot> ErrorToGodot<T> for () {
 impl<T: ToGodot> ErrorToGodot<T> for global::Error {
     type Mapped = global::Error;
 
-    fn result_to_godot(result: Result<&T, &Self>) -> CallOutcome<global::Error> {
+    fn result_to_godot(result: Result<T, Self>) -> CallOutcome<global::Error> {
         match result {
             Ok(_) => CallOutcome::Return(global::Error::OK),
-            Err(&e) => CallOutcome::Return(e),
+            Err(e) => CallOutcome::Return(e),
         }
     }
 }

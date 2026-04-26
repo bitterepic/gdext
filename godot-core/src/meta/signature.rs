@@ -13,7 +13,7 @@ use godot_ffi as sys;
 use sys::GodotFfi;
 
 use crate::builtin::Variant;
-use crate::meta::error::{CallError, CallResult, ConvertError};
+use crate::meta::error::{CallError, CallResult, ConvertError, ErrorToGodot};
 use crate::meta::param_tuple::TupleFromGodot;
 use crate::meta::{
     EngineFromGodot, EngineToGodot, FromGodot, GodotConvert, GodotType, InParamTuple,
@@ -21,18 +21,36 @@ use crate::meta::{
 };
 use crate::obj::{GodotClass, ValidatedObject};
 
-/// Checks for `#[func]` expansions that all parameters implement `FromGodot` and the return type implements `ToGodot`
-/// (or `Result<T: ToGodot, E: ErrorToGodot>`).
+/// Marker trait for types valid as `#[func]` return values.
+///
+/// Separates user-facing `#[func]` return types from internal engine types (e.g. `u64`, which implements
+/// [`EngineToGodot`] but not [`ToGodot`] and thus not `FuncReturn`).
+///
+/// Implemented for all [`ToGodot`] types and for `Result<T, E>` where `E: ErrorToGodot<T>`.
+#[doc(hidden)]
+pub trait FuncReturn: EngineToGodot {}
+
+impl<T: ToGodot> FuncReturn for T {}
+
+impl<T, E> FuncReturn for Result<T, E>
+where
+    T: ToGodot,
+    E: ErrorToGodot<T>,
+{
+}
+
+/// Checks for `#[func]` expansions that all parameters implement `FromGodot` and the return type implements [`FuncReturn`]
+/// (which covers all [`ToGodot`] types and `Result<T, E: ErrorToGodot<T>>`).
 ///
 /// [`Signature`] itself only requires `EngineFromGodot` and `EngineToGodot` for out-calls.
 #[inline(always)]
 #[doc(hidden)]
-pub fn ensure_func_bounds<Params: TupleFromGodot, Ret: ToGodot>() {}
+pub fn ensure_func_bounds<Params: TupleFromGodot, Ret: FuncReturn>() {}
 
 /// A full signature for a function.
 ///
 /// For in-calls (that is, calls from the Godot engine to Rust code) `Params` will implement [`InParamTuple`] and `Ret`
-/// will implement [`ToGodot`].
+/// will implement [`FuncReturn`] (which covers all [`ToGodot`] types and `Result<T, E: ErrorToGodot<T>>`).
 ///
 /// For out-calls (that is calls from Rust code to the Godot engine) `Params` will implement [`OutParamTuple`] and `Ret`
 /// will implement [`FromGodot`].
@@ -394,7 +412,7 @@ impl<Params: OutParamTuple, Ret: EngineFromGodot> Signature<Params, Ret> {
 
 /// Moves `ret_val` into `ret`.
 ///
-/// Uses [`ToGodot::__godot_try_into_variant`] (via [`EngineToGodot`]) to support `Result<T, E>` without panicking.
+/// Uses [`EngineToGodot::engine_try_into_variant`] to support `Result<T, E>` without panicking.
 ///
 /// # Safety
 /// - `ret` must be a pointer to an initialized `Variant`.
@@ -439,7 +457,7 @@ pub(crate) unsafe fn varcall_return_checked<R: ToGodot>(
 
 /// Moves `ret_val` into `ret`.
 ///
-/// Uses [`ToGodot::__godot_try_into_godot_owned`] (via [`EngineToGodot`]) to check for unexpected (call-failing) `Result<T, E>` errors
+/// Uses [`EngineToGodot::engine_try_into_godot_owned`] to check for unexpected (call-failing) `Result<T, E>` errors
 /// and produce the `Via` value in one consuming step. On error, returns `Err(CallError)` without writing to the return pointer.
 ///
 /// Note that on the FFI level, ptrcalls have no `r_error` output parameter, so `Result<T, E>` resulting in failed calls (e.g. through

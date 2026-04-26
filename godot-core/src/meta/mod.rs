@@ -59,7 +59,7 @@ pub(crate) mod sealed;
 #[doc(hidden)]
 pub mod private_reexport {
     pub use super::param_tuple::TupleFromGodot;
-    pub use super::signature::{CallContext, Signature, ensure_func_bounds};
+    pub use super::signature::{CallContext, FuncReturn, Signature, ensure_func_bounds};
 }
 
 pub mod conv;

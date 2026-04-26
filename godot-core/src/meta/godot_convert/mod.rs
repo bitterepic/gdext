@@ -55,6 +55,15 @@ pub trait GodotConvert {
 /// Please read the [`godot::meta` module docs](index.html) for further information about conversions.
 ///
 /// This trait can be derived using the [`#[derive(GodotConvert)]`](../register/derive.GodotConvert.html) macro.
+///
+/// # `Result<T, E>`
+/// It is possible to return `Result<T, E>` from `#[func]`, when `T: ToGodot` and [`E: ErrorToGodot`][crate::meta::error::ErrorToGodot].
+/// However, `Result<T, E>` currently does not implement `ToGodot` itself, as it is not generally infallible.
+///
+/// # Panics
+/// Currently, the methods `to_godot()`, `to_godot_owned()` and `to_variant()` are infallible and never panic, i.e. you can convert every value
+/// to a Godot representation. If new types are supported in the future that may not satisfy this (example: `Result<T, E>`), it's possible
+/// that panics are introduced _only for those new types_.
 #[diagnostic::on_unimplemented(
     message = "passing type `{Self}` to Godot requires `ToGodot` trait, which is usually provided by the library",
     note = "ToGodot is implemented for built-in types (i32, Vector2, GString, …). For objects, use Gd<T> instead of T.",
@@ -85,53 +94,19 @@ pub trait ToGodot: Sized + GodotConvert {
     /// # Return type
     /// - For `Pass = ByValue`, returns owned `Self::Via`.
     /// - For `Pass = ByRef`, returns borrowed `&Self::Via`.
-    ///
-    /// # Panics
-    /// Generally never panics, except for the `Result<T, E>` impl in case of `Err(E)`.
     fn to_godot(&self) -> ToArg<'_, Self::Via, Self::Pass>;
 
     /// Converts this type to owned Godot representation.
     ///
     /// Always returns `Self::Via`, cloning if necessary for ByRef types.
-    ///
-    /// # Panics
-    /// See [`to_godot()`][Self::to_godot].
     fn to_godot_owned(&self) -> Self::Via {
         Self::Pass::ref_to_owned_via(self)
     }
 
     /// Converts this type to a [Variant].
-    ///
-    /// # Panics
-    /// See [`to_godot()`][Self::to_godot].
-    // Exception safety: must not panic apart from exceptional circumstances (Nov 2024: only u64).
-    // This has invariant implications, e.g. in Array::resize().
+    // Exception safety: introducing a panic would have invariant implications, e.g. in Array::resize().
     fn to_variant(&self) -> Variant {
         Self::Pass::ref_to_variant(self)
-    }
-
-    /// Consuming conversion to `Variant` for `#[func]` varcall return values.
-    ///
-    /// Defaults to infallible [`to_variant()`][Self::to_variant]. Overridden for `Result<T, E>`
-    /// to propagate unexpected errors as [`CallError`][crate::meta::error::CallError] instead of panicking.
-    #[doc(hidden)]
-    fn __godot_try_into_variant(
-        self,
-        _call_ctx: &crate::meta::CallContext,
-    ) -> Result<Variant, crate::meta::error::CallError> {
-        Ok(self.to_variant())
-    }
-
-    /// Consuming conversion to the Godot `Via` type for `#[func]` ptrcall return values.
-    ///
-    /// Defaults to infallible [`to_godot_owned()`][Self::to_godot_owned]. Overridden for `Result<T, E>`
-    /// to propagate unexpected errors as [`CallError`][crate::meta::error::CallError] instead of panicking.
-    #[doc(hidden)]
-    fn __godot_try_into_godot_owned(
-        self,
-        _call_ctx: &crate::meta::CallContext,
-    ) -> Result<Self::Via, crate::meta::error::CallError> {
-        Ok(self.to_godot_owned())
     }
 }
 
@@ -256,16 +231,16 @@ impl<T: ToGodot> EngineToGodot for T {
 
     fn engine_try_into_variant(
         self,
-        call_ctx: &crate::meta::CallContext,
+        _call_ctx: &crate::meta::CallContext,
     ) -> Result<Variant, crate::meta::error::CallError> {
-        T::__godot_try_into_variant(self, call_ctx)
+        Ok(self.to_variant())
     }
 
     fn engine_try_into_godot_owned(
         self,
-        call_ctx: &crate::meta::CallContext,
+        _call_ctx: &crate::meta::CallContext,
     ) -> Result<Self::Via, crate::meta::error::CallError> {
-        T::__godot_try_into_godot_owned(self, call_ctx)
+        Ok(self.to_godot_owned())
     }
 }
 
@@ -348,5 +323,4 @@ macro_rules! impl_godot_as_self {
             }
         }
     };
-
 }
