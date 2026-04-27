@@ -13,8 +13,7 @@ use crate::meta::ToGodot;
 
 /// Defines how `Result<T, E>` returned by `#[func]` is mapped to Godot.
 ///
-/// When implemented for a type `E`, this trait enables `Result<T, E>` return types
-/// [through a blanket impl](../trait.ToGodot.html#impl-ToGodot-for-Result%3CT,+E%3E).
+/// When implemented for a type `E`, this trait enables `Result<T, E>` return types in `#[func]` methods.
 ///
 /// # Implementing the trait
 /// The associated type [`Mapped`][Self::Mapped] determines what GDScript sees as the function's return type. This type
@@ -37,7 +36,7 @@ use crate::meta::ToGodot;
 /// # use godot::prelude::*;
 /// use godot::builtin::Array;
 /// use godot::meta::error::{CallOutcome, ErrorToGodot};
-/// use godot::meta::{Element, ref_to_arg};
+/// use godot::meta::{Element, owned_into_arg};
 ///
 /// struct MyError(String);
 ///
@@ -45,10 +44,10 @@ use crate::meta::ToGodot;
 ///     // GDScript sees Array[T] as the #[func]'s return type.
 ///     type Mapped = Array<T>;
 ///
-///     fn result_to_godot(result: Result<&T, &Self>) -> CallOutcome<Array<T>> {
+///     fn result_to_godot(result: Result<T, Self>) -> CallOutcome<Array<T>> {
 ///         // Construct [elem] or [].
 ///         let array = match result {
-///             Ok(elem) => array![ref_to_arg(elem)],
+///             Ok(elem) => array![owned_into_arg(elem)],
 ///             Err(_) => Array::new(),
 ///         };
 ///
@@ -66,12 +65,21 @@ use crate::meta::ToGodot;
 /// else:
 ///     var value := result.front()  # typed!
 /// ```
+//
+// Potential expansion: ToGodot for Result<T, E> for infallible strategies (e.g. (), global::Error).
+// Backwards-compatible. By-ref needed for ToGodot taking &self. Rough sketch:
+//
+//     pub trait ErrorToGodotInfallible<T: ToGodot>: ErrorToGodot<T> {
+//         fn result_to_godot_ref(r: Result<&T, &Self>) -> Self::Mapped;
+//     }
+//     impl<T, E> ToGodot for Result<T, E> where E: ErrorToGodotInfallible<T> { ... }
+//
 pub trait ErrorToGodot<T: ToGodot>: Sized {
     /// The type to which `Result<T, Self>` is mapped on Godot side.
     type Mapped: ToGodot;
 
-    /// Map a `Result<T, Self>` to a Godot return value or an unexpected-error message.
-    fn result_to_godot(result: Result<&T, &Self>) -> CallOutcome<Self::Mapped>;
+    /// Map an owned `Result` to a Godot return value or an unexpected-error message.
+    fn result_to_godot(result: Result<T, Self>) -> CallOutcome<Self::Mapped>;
 }
 
 /// Outcome of mapping a `Result<T, E>` for a `#[func]` return value.
