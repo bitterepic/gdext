@@ -61,6 +61,57 @@ fn utilities_wrap() {
     assert_eq!(output, Variant::from(-2.7));
 }
 
+#[itest(skip)] // Switch to focus to test manually.
+fn utilities_print_custom() {
+    // Each invocation should not panic; output is suppressed to avoid noisy test logs.
+    let source = PrintSource {
+        function: "module::function",
+        file: "src/file.rs",
+        line: 42,
+    };
+    for level in [
+        PrintLevel::Info,
+        PrintLevel::Warn,
+        PrintLevel::Error,
+        PrintLevel::ScriptError,
+    ] {
+        print_custom(PrintRecord {
+            level,
+            message: "print-regular",
+            rationale: Some("detail-message"),
+            source: Some(source),
+            editor_notify: false,
+        });
+        print_custom(PrintRecord {
+            level,
+            message: "print-no-message",
+            rationale: None,
+            source: Some(source),
+            editor_notify: false,
+        });
+        print_custom(PrintRecord {
+            level,
+            message: "print-no-message-no-source",
+            rationale: None,
+            source: None, // Fall back to caller location.
+            editor_notify: false,
+        });
+    }
+
+    // Convenience: build PrintSource from std::panic::Location.
+    #[track_caller]
+    fn build() -> PrintSource<'static> {
+        // Function name passed separately; file/line auto-filled.
+        PrintSource::from_location(std::panic::Location::caller(), "build")
+    }
+
+    let expected_line = line!() + 2;
+    let expected_file = file!();
+    let src = build();
+    assert_eq!(src.line, expected_line);
+    assert_eq!(src.file, expected_file);
+}
+
 #[itest]
 fn utilities_max() {
     let output = max(&Variant::from(1.0), &Variant::from(3.0), vslice![5.0, 7.0]);

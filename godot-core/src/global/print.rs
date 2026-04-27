@@ -7,6 +7,9 @@
 
 //! Printing and logging functionality.
 
+use crate::builtin::Variant;
+use crate::sys;
+
 // https://stackoverflow.com/a/40234666
 #[macro_export]
 #[doc(hidden)]
@@ -24,32 +27,223 @@ macro_rules! inner_function {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! inner_godot_msg {
-    // FIXME expr needs to be parenthesised, see usages
-    ($godot_fn:ident; $fmt:literal $(, $args:expr_2021)* $(,)?) => {
-    //($($args:tt),* $(,)?) => {
+    ($level:expr; $fmt:literal $(, $args:expr)* $(,)?) => {
         {
-            let msg = format!("{}\0", format_args!($fmt $(, $args)*));
-            // Godot supports Unicode messages, not only ASCII. See `do_panic` test.
-
-            // Check whether engine is loaded, otherwise fall back to stderr.
-            if $crate::sys::is_initialized() {
-                let function = format!("{}\0", $crate::inner_function!());
-                // SAFETY: interface_fn! returns valid function pointer; string pointers are valid for the call duration.
-                #[allow(unused_unsafe)] // False positive; omitting `unsafe` causes compile error.
-                unsafe {
-                    $crate::sys::interface_fn!($godot_fn)(
-                        $crate::sys::c_str_from_str(&msg),
-                        $crate::sys::c_str_from_str(&function),
-                        $crate::sys::c_str_from_str(concat!(file!(), "\0")),
-                        line!() as i32,
-                        $crate::sys::conv::SYS_FALSE, // Whether to create a toast notification in editor.
-                    )
-                };
-            } else {
-                eprintln!("[{}] {}", stringify!($godot_fn), &msg[..msg.len() - 1]);
-            }
+            let description = format!($fmt $(, $args)*);
+            $crate::global::print_custom($crate::global::PrintRecord {
+                level: $level,
+                message: &description,
+                rationale: None,
+                source: Some($crate::global::PrintSource {
+                    function: $crate::inner_function!(),
+                    file: file!(),
+                    line: line!(),
+                }),
+                editor_notify: false,
+            });
         }
     };
+}
+
+/// Severity level for [`print_custom()`].
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
+pub enum PrintLevel {
+    /// Plain message. Used by [`godot_print!`][crate::global::godot_print].
+    ///
+    /// Godot's GDExtension API has no info-level print function that accepts a source location, so if a location is provided, godot-rust
+    /// will append "at:" information to the message.
+    Info,
+
+    /// Warning. Used by [`godot_warn!`][crate::global::godot_warn].
+    Warn,
+
+    /// Error. Used by [`godot_error!`][crate::global::godot_error].
+    Error,
+
+    /// Script error (rarely needed in Rust). Used by [`godot_script_error!`][crate::global::godot_script_error].
+    ScriptError,
+}
+
+impl PrintLevel {
+    /// Returns the upper-case prefix used by Godot to print on stdout/stderr.
+    ///
+    /// E.g. `Some("WARNING")` for `Warn` and `None` (no prefix) for `Info`.
+    pub fn godot_title(self) -> Option<&'static str> {
+        match self {
+            Self::Warn => Some("WARNING"),
+            Self::Error => Some("ERROR"),
+            Self::ScriptError => Some("SCRIPT ERROR"),
+            Self::Info => None,
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------------------------------------------------------------------------
+
+/// Source location associated with a [`PrintRecord`].
+///
+/// Can be built directly from explicit values, or via [`from_location()`][Self::from_location] from a [`std::panic::Location`].
+///
+/// If any of the string-based fields contain interior null bytes (`\0`), the string may be cut off at that point.
+#[derive(Copy, Clone, Debug)]
+pub struct PrintSource<'a> {
+    pub function: &'a str,
+    pub file: &'a str,
+    pub line: u32,
+}
+
+impl<'a> PrintSource<'a> {
+    /// Build a `PrintSource` from a [`std::panic::Location`] and a function name.
+    ///
+    /// Function name must be supplied separately, since [`Location`][std::panic::Location] does not capture it.
+    pub fn from_location(location: &'a std::panic::Location<'a>, function: &'a str) -> Self {
+        Self {
+            function,
+            file: location.file(),
+            line: location.line(),
+        }
+    }
+
+    /// Build a `PrintSource` from the caller's location, with an empty function name.
+    ///
+    /// Uses [`std::panic::Location::caller()`]; place `#[track_caller]` on intermediate functions to forward the caller through.
+    #[track_caller]
+    pub fn caller() -> Self {
+        Self::from_location(std::panic::Location::caller(), "")
+    }
+}
+
+// ----------------------------------------------------------------------------------------------------------------------------------------------
+
+/// Log record passed to [`print_custom()`].
+///
+/// Allows callers to provide an *explicit* source location, rather than the call site of the print macro.
+/// See also the [`Logger`][crate::classes::ILogger] interface for intercepting printed messages.
+///
+/// If any of the string-based fields contain interior null bytes (`\0`), the string may be cut off at that point.
+#[derive(Copy, Clone, Debug)]
+pub struct PrintRecord<'a> {
+    /// Severity level.
+    pub level: PrintLevel,
+
+    /// Primary message. Shown in the editor's debugger panel (warn/error) or output panel (info), and on the OS terminal.
+    pub message: &'a str,
+
+    /// Optional secondary message, displayed separately in editor UI for warn/error/script-error.
+    ///
+    /// For [`PrintLevel::Info`], it is appended to the description as `"description: message"`.
+    pub rationale: Option<&'a str>,
+
+    /// Source location.
+    ///
+    /// - For warn/error/script-error: if `None`, falls back to [`PrintSource::caller()`] (function name is empty).
+    /// - For [`PrintLevel::Info`]: if `Some`, formatted into the message; if `None`, no source suffix is appended.
+    pub source: Option<PrintSource<'a>>,
+
+    /// Whether to create a toast notification in the editor. Ignored for [`PrintLevel::Info`].
+    pub editor_notify: bool,
+}
+
+// ----------------------------------------------------------------------------------------------------------------------------------------------
+
+/// Low-level printing of log messages with full control over level, source location and editor toast.
+///
+/// Most users should prefer the [`godot_print!`][crate::global::godot_print], [`godot_warn!`][crate::global::godot_warn] and
+/// [`godot_error!`][crate::global::godot_error] macros. `print_custom()` is intended for low-level configurability or integration with crates
+/// like `tracing` or `log`.
+///
+/// See [`PrintRecord`] and [`PrintLevel`] for routing and source-location behavior. Due to the use of C-strings, if any of the string fields in
+/// `PrintRecord` or [`PrintSource`] have a nul byte (`\0`) in the middle, the printed text will be cut off at that nul byte. Consider this
+/// when working with user-provided texts (e.g. for logging).
+#[track_caller]
+pub fn print_custom(record: PrintRecord<'_>) {
+    // Engine not yet loaded -- fall back to stderr.
+    if !sys::is_initialized() {
+        let level = record
+            .level
+            .godot_title()
+            .map_or(String::new(), |t| format!("{t}:"));
+
+        match record.rationale {
+            Some(msg) => eprintln!("{level}{} ({msg})", record.message),
+            None => eprintln!("{level}{}", record.message),
+        }
+        return;
+    }
+
+    if record.level == PrintLevel::Info {
+        print_info(record.message, record.rationale, record.source);
+        return;
+    }
+
+    // Default location from caller, when source is not given.
+    let source = record.source.unwrap_or_else(PrintSource::caller);
+    let PrintSource {
+        function,
+        file,
+        line,
+    } = source;
+
+    // Null-terminate strings (Godot expects C strings).
+    let desc_nul = format!("{}\0", record.message);
+    let func_nul = format!("{function}\0");
+    let file_nul = format!("{file}\0");
+    let msg_nul = record.rationale.map(|m| format!("{m}\0"));
+    let editor_notify = sys::conv::bool_to_sys(record.editor_notify);
+
+    let desc_ptr = sys::c_str_from_str(&desc_nul);
+    let func_ptr = sys::c_str_from_str(&func_nul);
+    let file_ptr = sys::c_str_from_str(&file_nul);
+    let line = line as i32;
+
+    // SAFETY: engine initialized; interface functions valid; pointers live for the call duration.
+    unsafe {
+        if let Some(msg_z) = &msg_nul {
+            let godot_fn = match record.level {
+                PrintLevel::Warn => sys::interface_fn!(print_warning_with_message),
+                PrintLevel::Error => sys::interface_fn!(print_error_with_message),
+                PrintLevel::ScriptError => sys::interface_fn!(print_script_error_with_message),
+                PrintLevel::Info => unreachable!(),
+            };
+            godot_fn(
+                desc_ptr,
+                sys::c_str_from_str(msg_z),
+                func_ptr,
+                file_ptr,
+                line,
+                editor_notify,
+            );
+        } else {
+            let godot_fn = match record.level {
+                PrintLevel::Warn => sys::interface_fn!(print_warning),
+                PrintLevel::Error => sys::interface_fn!(print_error),
+                PrintLevel::ScriptError => sys::interface_fn!(print_script_error),
+                PrintLevel::Info => unreachable!(),
+            };
+            godot_fn(desc_ptr, func_ptr, file_ptr, line, editor_notify);
+        }
+    }
+}
+
+fn print_info(description: &str, message: Option<&str>, source: Option<PrintSource<'_>>) {
+    // `format!` pre-sizes the buffer to fit; each branch is a single allocation with no realloc.
+    let full = match (message, source) {
+        (Some(m), None) => format!("{description}: {m}"),
+        (Some(m), Some(s)) => {
+            format!(
+                "{description}: {m}\n\tat: {} ({}:{})",
+                s.function, s.file, s.line
+            )
+        }
+        (None, Some(s)) => format!(
+            "{description}\n\tat: {} ({}:{})",
+            s.function, s.file, s.line
+        ),
+        (None, None) => description.to_string(),
+    };
+
+    crate::global::print(&[Variant::from(full)]);
 }
 
 /// Pushes a warning message to Godot's built-in debugger and to the OS terminal.
@@ -63,7 +257,7 @@ macro_rules! inner_godot_msg {
 #[macro_export]
 macro_rules! godot_warn {
     ($fmt:literal $(, $args:expr_2021)* $(,)?) => {
-        $crate::inner_godot_msg!(print_warning; $fmt $(, $args)*);
+        $crate::inner_godot_msg!($crate::global::PrintLevel::Warn; $fmt $(, $args)*);
     };
 }
 
@@ -79,7 +273,7 @@ macro_rules! godot_warn {
 #[macro_export]
 macro_rules! godot_error {
     ($fmt:literal $(, $args:expr_2021)* $(,)?) => {
-        $crate::inner_godot_msg!(print_error; $fmt $(, $args)*);
+        $crate::inner_godot_msg!($crate::global::PrintLevel::Error; $fmt $(, $args)*);
     };
 }
 
@@ -94,7 +288,7 @@ macro_rules! godot_error {
 #[macro_export]
 macro_rules! godot_script_error {
     ($fmt:literal $(, $args:expr_2021)* $(,)?) => {
-        $crate::inner_godot_msg!(print_script_error; $fmt $(, $args)*);
+        $crate::inner_godot_msg!($crate::global::PrintLevel::ScriptError; $fmt $(, $args)*);
     };
 }
 
