@@ -9,11 +9,12 @@ use functions_common as fns;
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
-use crate::generator::functions_common;
+use crate::context::Context;
 use crate::generator::functions_common::{
     FnArgExpr, FnCode, FnKind, FnMeta, FnParamDecl, make_arg_expr, make_param_or_field_type,
 };
-use crate::models::domain::{FnParam, FnQualifier, Function, RustTy, TyName};
+use crate::generator::{functions_common, import_docs};
+use crate::models::domain::{ApiView, FnParam, FnQualifier, Function, RustTy, TyName};
 use crate::util::{ident, safe_ident};
 use crate::{conv, special_cases};
 
@@ -22,6 +23,8 @@ pub fn make_function_definition_with_defaults(
     code: &FnCode,
     full_fn_name: &Ident,
     meta: &FnMeta,
+    view: &ApiView,
+    ctx: &Context,
 ) -> (TokenStream, TokenStream) {
     let (default_fn_params, required_fn_params): (Vec<_>, Vec<_>) = sig
         .params()
@@ -72,6 +75,11 @@ pub fn make_function_definition_with_defaults(
     let cfg_attributes = &meta.cfg_attributes;
     let maybe_specific_docs = &meta.specific_docs;
 
+    let mut maybe_godot_doc = TokenStream::new();
+    if let Some(doc) = import_docs::import_function_docs(sig, ctx, view) {
+        maybe_godot_doc = quote! { #[doc = #doc] };
+    }
+
     let builders = quote! {
         #[doc = #builder_doc]
         #[must_use]
@@ -118,6 +126,7 @@ pub fn make_function_definition_with_defaults(
         #maybe_expect_deprecated
         #maybe_specific_docs
         #[doc = #default_parameter_usage]
+        #maybe_godot_doc
         #[inline]
         #vis fn #simple_fn_name (
             #simple_receiver_param
@@ -132,6 +141,7 @@ pub fn make_function_definition_with_defaults(
         // Lifetime is set if any parameter is a reference OR if the method is not static/global (and thus can refer to self).
         #maybe_deprecated
         #maybe_specific_docs
+        #maybe_godot_doc
         #[inline]
         #vis fn #extended_fn_name<'ex> (
             #extended_receiver_param

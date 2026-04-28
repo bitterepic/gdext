@@ -17,9 +17,9 @@ use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{ToTokens, format_ident, quote};
 
 use crate::context::Context;
-use crate::conv;
 use crate::models::api_json::{JsonBuiltinClass, JsonMethodArg, JsonMethodReturn};
 use crate::util::{ident, option_as_slice, safe_ident};
+use crate::{conv, special_cases};
 
 mod enums;
 
@@ -294,6 +294,7 @@ pub struct FunctionCommon {
     pub direction: FnDirection,
     /// Deprecation message, if the method is deprecated.
     pub deprecation_msg: Option<&'static str>,
+    pub description: Option<String>,
 }
 
 pub trait Function: fmt::Display {
@@ -331,6 +332,19 @@ pub trait Function: fmt::Display {
 
     fn is_private(&self) -> bool {
         self.common().is_private
+    }
+
+    fn is_private_in_final_api(&self) -> bool {
+        let replaced_with_type_safe = self
+            .surrounding_class()
+            .map(|class_name| {
+                special_cases::is_class_method_replaced_with_type_safe(
+                    class_name,
+                    self.godot_name(),
+                )
+            })
+            .unwrap_or(false);
+        self.is_private() && !replaced_with_type_safe
     }
 
     fn is_virtual(&self) -> bool {

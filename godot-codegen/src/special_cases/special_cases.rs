@@ -442,7 +442,7 @@ pub fn is_method_private(class_or_builtin_ty: &TyName, godot_method_name: &str) 
 ///
 /// See also [`get_class_method_enum_param_replacement()`] for a more automated approach specifically for enum parameters.
 #[rustfmt::skip]
-fn is_class_method_replaced_with_type_safe(class_ty: &TyName, godot_method_name: &str) -> bool {
+pub fn is_class_method_replaced_with_type_safe(class_ty: &TyName, godot_method_name: &str) -> bool {
     match (class_ty.godot_ty.as_str(), godot_method_name) {
         // Variant -> Option<Gd<Script>>
         | ("Object", "get_script")

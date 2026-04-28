@@ -178,6 +178,7 @@ pub fn generate_core_files(core_gen_path: &Path) {
     generate_builtin_class_files(
         &api,
         &mut ctx,
+        &view,
         &core_gen_path.join("builtin_classes"),
         &mut submit_fn,
     );
@@ -197,7 +198,7 @@ pub fn generate_core_files(core_gen_path: &Path) {
     generate_core_central_file(&api, &mut ctx, core_gen_path, &mut submit_fn);
     watch.record("generate_central_file");
 
-    generate_utilities_file(&api, core_gen_path, &mut submit_fn);
+    generate_utilities_file(&api, &ctx, &view, core_gen_path, &mut submit_fn);
     watch.record("generate_utilities_file");
 
     // From 4.4 onward, generate table that maps all virtual methods to their known hashes.

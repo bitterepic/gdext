@@ -205,6 +205,7 @@ pub struct JsonUtilityFunction {
     pub is_vararg: bool,
     pub hash: i64,
     pub arguments: Option<Vec<JsonMethodArg>>,
+    pub description: Option<String>,
 }
 
 #[derive(DeJson)]
@@ -216,6 +217,7 @@ pub struct JsonBuiltinMethod {
     pub is_static: bool,
     pub hash: Option<i64>,
     pub arguments: Option<Vec<JsonMethodArg>>,
+    pub description: Option<String>,
 }
 
 #[derive(DeJson, Clone)]
@@ -230,6 +232,7 @@ pub struct JsonClassMethod {
     pub hash: Option<i64>,
     pub return_value: Option<JsonMethodReturn>,
     pub arguments: Option<Vec<JsonMethodArg>>,
+    pub description: Option<String>,
 }
 
 // Example: set_point_weight_scale ->

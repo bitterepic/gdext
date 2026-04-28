@@ -419,6 +419,9 @@ impl BuiltinMethod {
             }
         };
 
+        // TODO(v0.6): find a better way than cloning (borrow, swap, ...).
+        let description = method.description.clone();
+
         Some(Self {
             common: FunctionCommon {
                 // Fill in these fields
@@ -434,6 +437,7 @@ impl BuiltinMethod {
                     hash: method.hash.expect("hash absent for builtin method"),
                 },
                 deprecation_msg: None, // Builtin methods are not deprecated yet.
+                description,
             },
             qualifier: FnQualifier::from_const_static(method.is_const, method.is_static),
             surrounding_class,
@@ -602,6 +606,9 @@ impl ClassMethod {
 
         let deprecation_msg = special_cases::get_class_method_deprecation(class_name, method);
 
+        // TODO(v0.6): find a better way than cloning (borrow, swap, ...).
+        let description = method.description.clone();
+
         Some(Self {
             common: FunctionCommon {
                 name: rust_method_name,
@@ -614,6 +621,7 @@ impl ClassMethod {
                 is_unsafe,
                 direction,
                 deprecation_msg,
+                description,
             },
             qualifier,
             surrounding_class: class_name.clone(),
@@ -693,6 +701,9 @@ impl UtilityFunction {
         let godot_method_name = function.name.clone();
         let rust_method_name = godot_method_name.clone(); // No change for now.
 
+        // TODO(v0.6): find a better way than cloning (borrow, swap, ...).
+        let description = function.description.clone();
+
         Some(Self {
             common: FunctionCommon {
                 name: rust_method_name,
@@ -707,6 +718,7 @@ impl UtilityFunction {
                     hash: function.hash,
                 },
                 deprecation_msg: None, // Utility functions are not deprecated.
+                description,
             },
         })
     }

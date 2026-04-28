@@ -15,8 +15,8 @@ use crate::generator::functions_common::{FnCode, FnDefinition, FnDefinitions, Fn
 use crate::generator::method_tables::MethodTableKey;
 use crate::generator::{enums, functions_common};
 use crate::models::domain::{
-    BuiltinClass, BuiltinMethod, ClassLike, ExtensionApi, FlowDirection, FnDirection, Function,
-    ModName, RustTy, TyName,
+    ApiView, BuiltinClass, BuiltinMethod, ClassLike, ExtensionApi, FlowDirection, FnDirection,
+    Function, ModName, RustTy, TyName,
 };
 use crate::{SubmitFn, conv, util};
 
@@ -36,6 +36,7 @@ pub struct GeneratedBuiltinModule {
 pub fn generate_builtin_class_files(
     api: &ExtensionApi,
     ctx: &mut Context,
+    view: &ApiView,
     gen_path: &Path,
     submit_fn: &mut SubmitFn,
 ) {
@@ -52,7 +53,7 @@ pub fn generate_builtin_class_files(
         let module_name = class.mod_name();
 
         let variant_shout_name = util::ident(variant.godot_shout_name());
-        let generated_builtin = make_builtin_class(class, &variant_shout_name, ctx);
+        let generated_builtin = make_builtin_class(class, &variant_shout_name, view, ctx);
         let file_contents = generated_builtin.code;
 
         let out_path = gen_path.join(format!("{}.rs", module_name.rust_mod));
@@ -105,6 +106,7 @@ pub fn make_builtin_module_file(classes_and_modules: Vec<GeneratedBuiltinModule>
 fn make_builtin_class(
     class: &BuiltinClass,
     variant_shout_name: &Ident,
+    view: &ApiView,
     ctx: &mut Context,
 ) -> GeneratedBuiltin {
     let godot_name = &class.name().godot_ty;
@@ -127,7 +129,7 @@ fn make_builtin_class(
     let (
         FnDefinitions { functions: inner_methods, builders: inner_builders },
         FnDefinitions { functions: outer_methods, builders: outer_builders },
-    ) = make_builtin_methods(class, variant_shout_name, &class.methods, ctx);
+    ) = make_builtin_methods(class, variant_shout_name, &class.methods, view, ctx);
 
     let imports = util::make_imports();
     let enums = enums::make_enums(&class.enums, &TokenStream::new());
@@ -190,6 +192,7 @@ fn make_builtin_methods(
     builtin_class: &BuiltinClass,
     variant_shout_name: &Ident,
     methods: &[BuiltinMethod],
+    view: &ApiView,
     ctx: &mut Context,
 ) -> (FnDefinitions, FnDefinitions) {
     // Can't use partition() without allocating new vectors. It can also not be used after map() since condition is lost at that point.
@@ -198,7 +201,7 @@ fn make_builtin_methods(
         .iter()
         .filter(|&method| !method.is_exposed_in_outer)
         .map(|method| {
-            make_builtin_method_definition(builtin_class, variant_shout_name, method, ctx)
+            make_builtin_method_definition(builtin_class, variant_shout_name, method, view, ctx)
         });
     let inner_defs = FnDefinitions::expand(inner_defs);
 
@@ -206,7 +209,7 @@ fn make_builtin_methods(
         .iter()
         .filter(|&method| method.is_exposed_in_outer)
         .map(|method| {
-            make_builtin_method_definition(builtin_class, variant_shout_name, method, ctx)
+            make_builtin_method_definition(builtin_class, variant_shout_name, method, view, ctx)
         });
     let outer_defs = FnDefinitions::expand(outer_defs);
 
@@ -249,6 +252,7 @@ fn make_builtin_method_definition(
     builtin_class: &BuiltinClass,
     variant_shout_name: &Ident,
     method: &BuiltinMethod,
+    view: &ApiView,
     ctx: &mut Context,
 ) -> FnDefinition {
     let FnDirection::Outbound { hash } = method.direction() else {
@@ -323,5 +327,7 @@ fn make_builtin_method_definition(
             is_varcall_fallible: false,
         },
         &FnMeta::default(),
+        view,
+        ctx,
     )
 }

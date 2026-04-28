@@ -114,7 +114,7 @@ fn make_class(class: &Class, ctx: &mut Context, view: &ApiView) -> GeneratedClas
         && !description.is_empty()
     {
         extended_class_doc.push_str("\n# Godot docs\n");
-        let imported_doc = super::import_docs::import_class_docs(description, class, ctx, view);
+        let imported_doc = super::import_docs::import_docs(description, Some(class), ctx, view);
         extended_class_doc.push_str(&imported_doc);
     }
 
@@ -147,7 +147,7 @@ fn make_class(class: &Class, ctx: &mut Context, view: &ApiView) -> GeneratedClas
     let FnDefinitions {
         functions: methods,
         builders,
-    } = make_class_methods(class, &class.methods, &cfg_attributes, ctx);
+    } = make_class_methods(class, &class.methods, &cfg_attributes, view, ctx);
 
     let signals::SignalCodegen {
         signal_code,
@@ -560,12 +560,13 @@ fn make_class_methods(
     class: &Class,
     methods: &[ClassMethod],
     cfg_attributes: &TokenStream,
+    view: &ApiView,
     ctx: &mut Context,
 ) -> FnDefinitions {
     let get_method_table = class.api_level.table_global_getter();
 
     let definitions = methods.iter().map(|method| {
-        make_class_method_definition(class, method, &get_method_table, cfg_attributes, ctx)
+        make_class_method_definition(class, method, &get_method_table, cfg_attributes, view, ctx)
     });
 
     FnDefinitions::expand(definitions)
@@ -576,6 +577,7 @@ fn make_class_method_definition(
     method: &ClassMethod,
     get_method_table: &Ident,
     cfg_attributes: &TokenStream,
+    view: &ApiView,
     ctx: &mut Context,
 ) -> FnDefinition {
     let FnDirection::Outbound { hash } = method.direction() else {
@@ -648,5 +650,7 @@ fn make_class_method_definition(
             cfg_attributes: cfg_attributes1,
             specific_docs: TokenStream::new(),
         },
+        view,
+        ctx,
     )
 }
