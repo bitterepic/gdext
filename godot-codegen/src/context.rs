@@ -13,10 +13,10 @@ use regex::Regex;
 
 use crate::generator::method_tables::MethodTableKey;
 use crate::generator::notifications;
-use crate::models::domain::{ArgPassing, GodotTy, RustTy, TyName};
-use crate::models::json::{
+use crate::models::api_json::{
     JsonBuiltinClass, JsonBuiltinMethod, JsonClass, JsonClassConstant, JsonClassMethod,
 };
+use crate::models::domain::{ArgPassing, GodotTy, RustTy, TyName};
 use crate::util::option_as_slice;
 use crate::{JsonExtensionApi, special_cases, util};
 

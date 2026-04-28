@@ -24,6 +24,12 @@ pub const ALL_VERSIONS: &[(u8, u8, u8)] = &[
     // ]]
 ];
 
+/// Minimum Godot version supported by godot-rust, as `(major, minor)`.
+pub const MIN_SUPPORTED_VERSION: (u8, u8) = {
+    let (major, minor, _patch) = ALL_VERSIONS[0];
+    (major, minor)
+};
+
 // [version-sync] [[
 //  [line] #[cfg(feature = "api-$kebabVersion")]\npub use gdextension_api::version_$snakeVersion as prebuilt;
 #[cfg(feature = "api-4-2")]

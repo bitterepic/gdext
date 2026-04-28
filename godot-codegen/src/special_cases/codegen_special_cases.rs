@@ -10,7 +10,7 @@
 // TODO make this file private and only accessed by special_cases.rs.
 
 use crate::context::Context;
-use crate::models::json::{JsonBuiltinMethod, JsonClassMethod, JsonUtilityFunction};
+use crate::models::api_json::{JsonBuiltinMethod, JsonClassMethod, JsonUtilityFunction};
 use crate::special_cases;
 
 pub(crate) fn is_builtin_method_excluded(_method: &JsonBuiltinMethod) -> bool {

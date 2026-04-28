@@ -10,8 +10,8 @@
 use proc_macro2::{Ident, Literal, Punct, Spacing, TokenStream, TokenTree};
 use quote::{format_ident, quote};
 
+use crate::models::api_json::JsonClass;
 use crate::models::domain::ClassCodegenLevel;
-use crate::models::json::JsonClass;
 use crate::special_cases;
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------

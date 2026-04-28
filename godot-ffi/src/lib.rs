@@ -33,7 +33,7 @@
 //! - `// SAFETY: Ref-count managed by Godot during ptrcall.`
 //! - `// SAFETY: One-time init on main thread; not yet initialized.`
 //!
-//! **TODO(v0.7)**: Revisit once JSON-based C API is ready.
+//! All FFI type definitions and interface function pointers are generated from `gdextension_interface.json`.
 
 #![cfg_attr(test, allow(unused))]
 
@@ -90,7 +90,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub use extras::*;
 pub use r#gen::central::*;
 pub use r#gen::gdextension_interface::*;
-pub use r#gen::interface::*;
 // Method tables
 pub use r#gen::table_builtins::*;
 pub use r#gen::table_builtins_lifecycle::*;
@@ -541,8 +540,8 @@ pub unsafe fn godot_has_feature(
 
     // SAFETY: Called from main thread, and interface has been initialized.
     let interface = unsafe { get_interface() };
-    let get_singleton = interface.global_get_singleton.unwrap();
-    let class_ptrcall = interface.object_method_bind_ptrcall.unwrap();
+    let get_singleton = interface.global_get_singleton;
+    let class_ptrcall = interface.object_method_bind_ptrcall;
 
     // SAFETY: Interface has been initialized, and `Scene` has been initialized, so `get_singleton` can be called. `os_class_sname` is a valid
     // `StringName` pointer.
@@ -676,7 +675,10 @@ macro_rules! builtin_call {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! interface_fn {
-    ($name:ident) => {{ unsafe { $crate::get_interface().$name.unwrap_unchecked() } }};
+    ($name:ident) => {{
+        // SAFETY: caller ensures that the interface is initialized.
+        unsafe { $crate::get_interface().$name }
+    }};
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------

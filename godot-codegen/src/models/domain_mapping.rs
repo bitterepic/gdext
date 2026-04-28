@@ -10,18 +10,18 @@ use std::collections::HashMap;
 use proc_macro2::Ident;
 
 use crate::context::Context;
+use crate::models::api_json::{
+    JsonBuiltinClass, JsonBuiltinMethod, JsonBuiltinSizes, JsonClass, JsonClassConstant,
+    JsonClassMethod, JsonConstructor, JsonEnum, JsonEnumConstant, JsonExtensionApi, JsonHeader,
+    JsonMethodArg, JsonMethodReturn, JsonNativeStructure, JsonOperator, JsonSignal, JsonSingleton,
+    JsonUtilityFunction,
+};
 use crate::models::domain::{
     BuildConfiguration, BuiltinClass, BuiltinMethod, BuiltinSize, BuiltinVariant, Class,
     ClassCommons, ClassConstant, ClassConstantValue, ClassMethod, ClassSignal, Constructor, Enum,
     EnumReplacements, Enumerator, EnumeratorValue, ExtensionApi, FlowDirection, FnDirection,
     FnParam, FnQualifier, FnReturn, FunctionCommon, GodotApiVersion, ModName, NativeStructure,
     Operator, RustTy, Singleton, TyName, UtilityFunction,
-};
-use crate::models::json::{
-    JsonBuiltinClass, JsonBuiltinMethod, JsonBuiltinSizes, JsonClass, JsonClassConstant,
-    JsonClassMethod, JsonConstructor, JsonEnum, JsonEnumConstant, JsonExtensionApi, JsonHeader,
-    JsonMethodArg, JsonMethodReturn, JsonNativeStructure, JsonOperator, JsonSignal, JsonSingleton,
-    JsonUtilityFunction,
 };
 use crate::util::{get_api_level, ident, option_as_slice};
 use crate::{conv, special_cases};

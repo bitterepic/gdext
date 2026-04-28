@@ -20,18 +20,7 @@ use std::sync::Once;
 
 use nanoserde::DeJson;
 
-use crate::depend_on_custom_json::header_gen::generate_rust_binding;
-use crate::godot_version::validate_godot_version;
-use crate::{GodotVersion, StopWatch, env_var_or_deprecated};
-
-#[rustfmt::skip] // Do not reorder.
-// GDExtension headers are backward compatible (new incremental changes in general are exposed as additions to the existing API) while godot-rust simply ignores extra declarations in header file.
-// Therefore, latest headers should work fine for all the past and future Godot versions – as long as the engine remains unchanged.
-// [version-sync] [[
-//  [include] current.minor
-//  [line] use gdextension_api::version_$snakeVersion::load_gdextension_header_h as load_latest_gdextension_headers;
-use gdextension_api::version_4_6::load_gdextension_header_h as load_latest_gdextension_headers;
-// ]]
+use crate::{GodotVersion, env_var_or_deprecated};
 
 /// A minimal version of deserialized JsonExtensionApi that includes only the header.
 #[derive(DeJson)]
@@ -63,7 +52,7 @@ impl JsonHeader {
     }
 }
 
-pub fn load_custom_gdextension_json() -> String {
+pub fn load_custom_extension_api_json() -> String {
     static WARN_ONCE: Once = Once::new();
     let env_var = env_var_or_deprecated(
         &WARN_ONCE,
@@ -89,25 +78,12 @@ pub fn load_custom_gdextension_json() -> String {
 }
 
 pub(crate) fn read_godot_version() -> GodotVersion {
-    let extension_api: JsonExtensionApi = DeJson::deserialize_json(&load_custom_gdextension_json())
-        .expect("failed to deserialize JSON");
-    let version = extension_api.header.into_godot_version();
+    let extension_api: JsonExtensionApi =
+        DeJson::deserialize_json(&load_custom_extension_api_json())
+            .expect("failed to deserialize JSON");
 
-    validate_godot_version(&version);
-
-    version
-}
-
-pub(crate) fn write_gdextension_headers(
-    out_h_path: &Path,
-    out_rs_path: &Path,
-    watch: &mut StopWatch,
-) {
-    let h_contents = load_latest_gdextension_headers();
-    fs::write(out_h_path, h_contents.as_ref())
-        .unwrap_or_else(|e| panic!("failed to write gdextension_interface.h: {e}"));
-    watch.record("write_header_h");
-
-    generate_rust_binding(out_h_path, out_rs_path);
-    watch.record("generate_header_rs");
+    extension_api
+        .header
+        .into_godot_version()
+        .validate_or_panic()
 }

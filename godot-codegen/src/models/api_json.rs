@@ -270,7 +270,7 @@ pub fn load_extension_api(watch: &mut godot_bindings::StopWatch) -> JsonExtensio
     // Use type inference, so we can accept both String (dynamically resolved) and &str (prebuilt).
     // #[allow]: as_ref() acts as impl AsRef<str>, but with conditional compilation
 
-    let json = godot_bindings::load_gdextension_json(watch);
+    let json = godot_bindings::load_extension_api_json(watch);
     let json_str: &str = json.as_ref();
 
     let model: JsonExtensionApi =
