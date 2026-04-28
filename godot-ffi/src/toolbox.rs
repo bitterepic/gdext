@@ -96,6 +96,9 @@ where
 }
 
 /// Returns a C `const char*` for a null-terminated byte string.
+///
+/// The input must end in a `\0` terminator. If it contains additional interior `\0` bytes, C consumers will read only up to
+/// the first one -- the remainder is silently truncated. Callers passing user-provided text need to decide if this behavior is OK.
 #[inline]
 pub fn c_str(s: &[u8]) -> *const std::ffi::c_char {
     // Ensure null-terminated
@@ -105,6 +108,8 @@ pub fn c_str(s: &[u8]) -> *const std::ffi::c_char {
 }
 
 /// Returns a C `const char*` for a null-terminated string slice. UTF-8 encoded.
+///
+/// Same caveat as [`c_str()`]: interior `\0` bytes cause silent truncation on the C side.
 #[inline]
 pub fn c_str_from_str(s: &str) -> *const std::ffi::c_char {
     c_str(s.as_bytes())
