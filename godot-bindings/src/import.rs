@@ -65,3 +65,11 @@ pub use gdextension_api::version_4_6 as prebuilt;
 //  [line] pub use gdextension_api::version_$snakeVersion as prebuilt;
 pub use gdextension_api::version_4_6 as prebuilt;
 // ]]
+
+// Latest API version, supported by the shipped prebuilt.
+// TODO - this info should be included in the `gdextension_api` library.
+// [version-sync] [[
+//  [include] current
+//  [line] pub const LATEST_API_VERSION: (u8, u8, u8) = $triple;
+pub const LATEST_API_VERSION: (u8, u8, u8) = (4, 6, 0);
+// ]]
