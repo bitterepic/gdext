@@ -17,6 +17,31 @@ Cutting-edge API docs of the `master` branch are available [here](https://godot-
 - [v0.1.1](#v011), [v0.1.2](#v012), [v0.1.3](#v013)
 
 
+## [v0.5.2](https://docs.rs/godot/0.5.2)
+
+### 🌻 Features
+
+- Support `Result<T, E>` as return type in `#[func]` ([#1544](https://github.com/godot-rust/gdext/pull/1544), [#1564](https://github.com/godot-rust/gdext/pull/1564))
+- Import Godot docs for classes, not yet methods ([#1552](https://github.com/godot-rust/gdext/pull/1552))
+- Add `print_custom()` for low-level Godot printing ([#1569](https://github.com/godot-rust/gdext/pull/1569))
+
+### 🧹 Quality of life
+
+- Virtual methods in `I*` traits now follow lifecycle order ([#1555](https://github.com/godot-rust/gdext/pull/1555))
+- Implement convenience conversions for `Error` ([#1528](https://github.com/godot-rust/gdext/pull/1528))
+- Unify `CALL_FAILED_STATUS`; silence redundant print ([#1557](https://github.com/godot-rust/gdext/pull/1557))
+- Collect uninitialized `OnEditor` fields into single panic message ([#1558](https://github.com/godot-rust/gdext/pull/1558))
+
+### 🏗️ Maintenance
+
+- Follow up Godot 4.7 nullability changes ([#1556](https://github.com/godot-rust/gdext/pull/1556))
+- Codegen directly uses correct module path for global enums ([#1559](https://github.com/godot-rust/gdext/pull/1559))
+
+### 📚 Documentation
+
+- Discourage use of `WeakRef` class ([#1560](https://github.com/godot-rust/gdext/pull/1560))
+
+
 ## [v0.5.1](https://docs.rs/godot/0.5.1)
 
 _12 April 2026_
