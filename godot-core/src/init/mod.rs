@@ -212,6 +212,14 @@ unsafe fn gdext_on_level_init(level: InitLevel, _userdata: &InitUserData) {
     // (e.g. class registration). This would break the assumption that the load_class_method_table() calls are exclusive.
     // We could maybe protect globals with a mutex until initialization is complete, and then move it to a directly-accessible, read-only static.
 
+    // Godot might change the main-thread between init levels Core and Servers. We have to know the correct main-thread ID before doing
+    // anything else. Currently Android is the only platform known to do this.
+    // See https://github.com/godot-rust/gdext/issues/1423#issuecomment-4340496087 and https://github.com/godot-rust/gdext/issues/1250.
+    if level == InitLevel::Servers {
+        // SAFETY: called from the main thread, sys::initialized has already been called.
+        unsafe { sys::discover_main_thread() };
+    }
+
     // SAFETY: we are in the main thread, initialize has been called, has never been called with this level before.
     unsafe { sys::load_class_method_table(level) };
 
@@ -228,10 +236,7 @@ unsafe fn gdext_on_level_init(level: InitLevel, _userdata: &InitUserData) {
             #[cfg(since_api = "4.4")]
             sys::set_editor_hint(crate::classes::Engine::singleton().is_editor_hint());
         }
-        InitLevel::Servers => {
-            // SAFETY: called from the main thread, sys::initialized has already been called.
-            unsafe { sys::discover_main_thread() };
-        }
+        InitLevel::Servers => {}
         InitLevel::Scene => {
             // SAFETY: On the main thread, api initialized, `Scene` was initialized above.
             unsafe { ensure_godot_features_compatible() };
