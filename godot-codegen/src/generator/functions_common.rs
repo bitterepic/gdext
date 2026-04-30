@@ -8,8 +8,9 @@
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
-use crate::generator::default_parameters;
-use crate::models::domain::{ArgPassing, FnParam, FnQualifier, Function, RustTy};
+use crate::context::Context;
+use crate::generator::{default_parameters, import_docs};
+use crate::models::domain::{ApiView, ArgPassing, FnParam, FnQualifier, Function, RustTy};
 use crate::special_cases;
 use crate::util::lifetime;
 
@@ -109,7 +110,14 @@ pub struct FnParamTokens {
     pub arg_exprs: Vec<TokenStream>,
 }
 
-pub fn make_function_definition(sig: &dyn Function, code: &FnCode, meta: &FnMeta) -> FnDefinition {
+pub fn make_function_definition(
+    sig: &dyn Function,
+    code: &FnCode,
+    meta: &FnMeta,
+    // TODO(v0.6): Consider removing these two arguments, because they are only needed for importing docs.
+    view: &ApiView,
+    ctx: &Context,
+) -> FnDefinition {
     let has_default_params = default_parameters::function_uses_default_params(sig);
     let vis = if has_default_params {
         // Public API mapped by separate function.
@@ -168,6 +176,8 @@ pub fn make_function_definition(sig: &dyn Function, code: &FnCode, meta: &FnMeta
                 code,
                 &primary_fn_name,
                 meta,
+                view,
+                ctx,
             );
     } else {
         primary_fn_name = rust_function_name.clone();
@@ -177,6 +187,11 @@ pub fn make_function_definition(sig: &dyn Function, code: &FnCode, meta: &FnMeta
 
     let (maybe_deprecated, _maybe_expect_deprecated) = make_deprecation_attribute(sig);
     let maybe_specific_doc = &meta.specific_docs;
+
+    let mut maybe_godot_doc = TokenStream::new();
+    if let Some(doc) = import_docs::import_function_docs(sig, ctx, view) {
+        maybe_godot_doc = quote! { #[doc = #doc] };
+    }
 
     let call_sig_decl = {
         let return_ty = &sig.return_value().type_tokens();
@@ -201,6 +216,7 @@ pub fn make_function_definition(sig: &dyn Function, code: &FnCode, meta: &FnMeta
         quote! {
             #maybe_deprecated
             #maybe_specific_doc
+            #maybe_godot_doc
             #maybe_safety_doc
             #maybe_unsafe fn #primary_fn_name (
                 #receiver_param
@@ -218,6 +234,7 @@ pub fn make_function_definition(sig: &dyn Function, code: &FnCode, meta: &FnMeta
             quote! {
                 #maybe_deprecated
                 #maybe_specific_doc
+                #maybe_godot_doc
                 #maybe_safety_doc
                 #vis #maybe_unsafe fn #primary_fn_name (
                     #receiver_param
@@ -249,6 +266,7 @@ pub fn make_function_definition(sig: &dyn Function, code: &FnCode, meta: &FnMeta
             quote! {
                 #maybe_deprecated
                 #maybe_specific_doc
+                #maybe_godot_doc
                 /// # Panics
                 /// This is a _varcall_ method, meaning parameters and return values are passed as `Variant`.
                 /// It can detect call failures and will panic in such a case.
@@ -290,6 +308,7 @@ pub fn make_function_definition(sig: &dyn Function, code: &FnCode, meta: &FnMeta
         quote! {
             #maybe_deprecated
             #maybe_specific_doc
+            #maybe_godot_doc
             #maybe_safety_doc
             #vis #maybe_unsafe fn #primary_fn_name  (
                 #receiver_param

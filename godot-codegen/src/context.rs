@@ -475,6 +475,7 @@ pub struct ImportRegexes {
     pub type_links: Regex,
     pub method_links: Regex,
     pub unimplemented_links: Regex,
+    pub param_links: Regex,
 }
 
 impl Default for ImportRegexes {
@@ -495,11 +496,20 @@ impl Default for ImportRegexes {
             codeblock_lang_tags: regex(r#"\[codeblock lang=(.*?)\]([\s\S]*?)\[\/codeblock\]"#),
             gdscript_tags: regex(r#"\[gdscript\]([\s\S]*?)\[\/gdscript\]"#),
             csharp_tags: regex(r#"\[csharp\]([\s\S]*?)\[\/csharp\]"#),
-            type_links: regex(r#"\[([a-zA-Z0-9@]+?)\]"#),
+            // Matches a markdown code, codeblock tags, or a Godot type link. We need
+            // to match the code and codeblocks first to avoid matching type links inside the code
+            // Examples:
+            // - `code`
+            // - ```lang codeblock```
+            // - [Node]
+            type_links: regex(
+                r#"(\`[\s\S]*?\`)|(\`\`\`[a-zA-Z]*\s*[\s\S]*?\`\`\`)|\[([a-zA-Z0-9@]+?)\]"#,
+            ),
             method_links: regex(r#"\[method ((([a-zA-Z0-9@]+?)\.)?([a-zA-Z0-9_]+?))\]"#),
             unimplemented_links: regex(
-                r#"\[(annotation|constant|member|enum|param|constructor|signal)\s.*?\]"#,
+                r#"\[(annotation|constant|member|enum|constructor|signal)\s.*?\]"#,
             ),
+            param_links: regex(r#"\[param ([a-zA-Z0-9_]+?)\]"#),
         }
     }
 }

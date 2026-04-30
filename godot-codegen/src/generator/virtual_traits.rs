@@ -31,7 +31,8 @@ pub fn make_virtual_methods_trait(
     let trait_name_str = class.name().virtual_trait_name();
     let trait_name = ident(&trait_name_str);
 
-    let (mut virtual_methods, extra_docs) = make_all_virtual_methods(class, all_base_names, view);
+    let (mut virtual_methods, extra_docs) =
+        make_all_virtual_methods(class, all_base_names, view, ctx);
     virtual_methods.extend(make_special_virtual_methods(notification_enum_name));
     virtual_methods.sort_by_key(|m| m.order_in_trait);
 
@@ -213,6 +214,8 @@ fn make_special_virtual_methods(notification_enum_name: &Ident) -> Vec<OrderedVi
 fn make_virtual_method(
     method: &ClassMethod,
     presence: VirtualMethodPresence,
+    view: &ApiView,
+    ctx: &Context,
 ) -> Option<OrderedVirtual> {
     if !method.is_virtual() {
         return None;
@@ -242,6 +245,8 @@ fn make_virtual_method(
             is_varcall_fallible: true,
         },
         &FnMeta::default(),
+        view,
+        ctx,
     );
 
     // Virtual methods have no builders.
@@ -253,6 +258,7 @@ fn make_all_virtual_methods(
     class: &Class,
     all_base_names: &[TyName],
     view: &ApiView,
+    ctx: &Context,
 ) -> (Vec<OrderedVirtual>, String) {
     let mut all_methods = Vec::new();
 
@@ -262,7 +268,7 @@ fn make_all_virtual_methods(
         let presence =
             special_cases::get_derived_virtual_method_presence(class.name(), method.godot_name());
 
-        if let Some(ordered) = make_virtual_method(method, presence) {
+        if let Some(ordered) = make_virtual_method(method, presence, view, ctx) {
             all_methods.push(ordered);
         }
     }
@@ -299,7 +305,7 @@ fn make_all_virtual_methods(
                 .unwrap();
             }
 
-            if let Some(ordered) = make_virtual_method(method, derived_presence) {
+            if let Some(ordered) = make_virtual_method(method, derived_presence, view, ctx) {
                 all_methods.push(ordered);
             }
         }
