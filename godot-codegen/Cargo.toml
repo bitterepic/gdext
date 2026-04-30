@@ -28,7 +28,6 @@ heck = { workspace = true }
 nanoserde = { workspace = true }
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
-regex = { workspace = true }
 
 [build-dependencies]
 godot-bindings = { path = "../godot-bindings", version = "=0.5.2" } # emit_godot_version_cfg
@@ -52,4 +51,3 @@ rustc-args = ["--cfg", "published_docs"]
 #
 #[dev-dependencies]
 #criterion = "0.5"
-
