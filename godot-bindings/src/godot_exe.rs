@@ -7,6 +7,7 @@
 
 //! Commands related to Godot executable
 
+use std::borrow::Cow;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -47,6 +48,27 @@ pub fn load_extension_api_json(watch: &mut StopWatch) -> String {
 
     watch.record("read_api_json");
     result
+}
+
+pub fn load_gdextension_interface_json(watch: &mut StopWatch) -> Cow<'static, str> {
+    let godot_bin = locate_godot_binary();
+    rerun_on_changed(&godot_bin);
+    watch.record("locate_godot");
+
+    if read_godot_version(&godot_bin).is_newer_than_latest() {
+        watch.record("load_prebuilt_header_json");
+        return gdextension_api::load_gdextension_interface_json();
+    }
+
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    let json_path = format!("{out_dir}/gdextension_interface.json");
+    dump_header_json_file(&godot_bin, &json_path);
+    watch.record("dump_header_json");
+
+    let contents = fs::read_to_string(json_path)
+        .expect("failed to load freshly created gdextension_interface.json");
+
+    Cow::Owned(contents)
 }
 
 /*
@@ -145,6 +167,19 @@ pub(crate) fn locate_godot_binary() -> PathBuf {
              GDRUST_GODOT_BIN environment variable (with the path to the executable)."
         )
     }
+}
+
+fn dump_header_json_file<P: AsRef<Path>>(godot_bin: &PathBuf, path: &P) {
+    let cwd = path.as_ref().parent().unwrap();
+
+    fs::create_dir_all(cwd)
+        .unwrap_or_else(|_| panic!("failed to create directory '{}'", cwd.display()));
+    let mut cmd = Command::new(godot_bin);
+    cmd.current_dir(cwd)
+        .arg("--headless")
+        .arg("--dump-gdextension-interface-json");
+
+    execute(cmd, "dump Godot header file");
 }
 
 fn execute(cmd: Command, error_message: &str) -> Output {

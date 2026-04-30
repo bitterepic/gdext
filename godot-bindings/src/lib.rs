@@ -18,7 +18,7 @@ pub use watch::StopWatch;
 
 mod import;
 
-pub use import::MIN_SUPPORTED_VERSION;
+pub use import::{LATEST_API_VERSION, MIN_SUPPORTED_VERSION};
 
 #[derive(Eq, PartialEq, Debug)]
 pub struct GodotVersion {
@@ -41,19 +41,28 @@ pub struct GodotVersion {
 #[cfg(any(feature = "api-custom", feature = "api-custom-json"))]
 impl GodotVersion {
     pub(crate) fn validate_or_panic(self) -> Self {
+        let (min_major, min_minor) = MIN_SUPPORTED_VERSION;
+
         assert_eq!(
-            self.major, 4,
+            self.major, min_major,
             "Only Godot versions with major version 4 are supported; found version {}.",
             self.full_string
         );
 
         assert!(
-            self.minor > 0,
+            self.minor > min_minor,
             "Godot 4.0 is no longer supported by godot-rust; found version {}.",
             self.full_string
         );
 
         self
+    }
+
+    /// `True` if given godot version is newer than one included in the shipped prebuilt.
+    pub(crate) fn is_newer_than_latest(&self) -> bool {
+        let (_latest_major, latest_minor, _latest_patch): (u8, u8, u8) = LATEST_API_VERSION;
+
+        self.minor >= latest_minor
     }
 }
 
@@ -78,8 +87,7 @@ mod depend_on_custom {
     }
 
     pub fn load_gdextension_interface_json(watch: &mut StopWatch) -> Cow<'static, str> {
-        watch.record("load_interface_json");
-        gdextension_api::load_gdextension_interface_json()
+        godot_exe::load_gdextension_interface_json(watch)
     }
 
     pub(crate) fn get_godot_version() -> GodotVersion {
