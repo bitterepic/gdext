@@ -80,7 +80,7 @@ impl<'d> DocImporter<'d> {
 
     fn import(mut self) -> String {
         let mut out = String::with_capacity(self.doc.len());
-        let ok = self.parse_until(&mut out, None, true, true);
+        let ok = self.parse_until(&mut out, None, true, true, true);
         debug_assert!(ok, "top-level parse_until without closing tag must succeed");
         out
     }
@@ -95,6 +95,7 @@ impl<'d> DocImporter<'d> {
         closing_tag: Option<&str>,
         double_newlines: bool,
         allow_type_links: bool,
+        allow_tags: bool,
     ) -> bool {
         let start_pos = self.pos;
         let start_len = out.len();
@@ -107,7 +108,8 @@ impl<'d> DocImporter<'d> {
                 return true;
             }
 
-            if self.remaining().starts_with('[')
+            if allow_tags
+                && self.remaining().starts_with('[')
                 && self.try_parse_tag(out, double_newlines, allow_type_links)
             {
                 continue;
@@ -138,8 +140,8 @@ impl<'d> DocImporter<'d> {
         double_newlines: bool,
         allow_type_links: bool,
     ) -> bool {
-        // Dispatch by the byte after `[` to skip unrelated `starts_with()` checks.
-        // If nothing matches, fall through to Markdown and bracket-link parsing.
+        // Dispatch by the byte after `[` to avoid repeated `starts_with()` checks.
+        // If a real opener is unterminated, leave it literal instead of falling through into bracket-link parsing.
         let after_bracket = self.doc.as_bytes().get(self.pos + 1).copied();
         let matched = match after_bracket {
             Some(b'b') => self.try_wrapped_tag(
@@ -150,6 +152,7 @@ impl<'d> DocImporter<'d> {
                 "**",
                 double_newlines,
                 allow_type_links,
+                true,
             ),
             Some(b'i') => self.try_wrapped_tag(
                 out,
@@ -159,6 +162,7 @@ impl<'d> DocImporter<'d> {
                 "_",
                 double_newlines,
                 allow_type_links,
+                true,
             ),
             Some(b'k') => self.try_wrapped_tag(
                 out,
@@ -168,10 +172,19 @@ impl<'d> DocImporter<'d> {
                 "`",
                 double_newlines,
                 allow_type_links,
+                true,
             ),
             Some(b'c') => {
-                self.try_wrapped_tag(out, "[code skip-lint]", "[/code]", "`", "`", false, false)
-                    || self.try_wrapped_tag(out, "[code]", "[/code]", "`", "`", false, false)
+                self.try_wrapped_tag(
+                    out,
+                    "[code skip-lint]",
+                    "[/code]",
+                    "`",
+                    "`",
+                    false,
+                    false,
+                    false,
+                ) || self.try_wrapped_tag(out, "[code]", "[/code]", "`", "`", false, false, false)
                     || self.try_codeblocks_tag(out)
                     || self.try_wrapped_tag(
                         out,
@@ -179,6 +192,7 @@ impl<'d> DocImporter<'d> {
                         "[/codeblock]",
                         "```gdscript",
                         "```",
+                        false,
                         false,
                         false,
                     )
@@ -191,9 +205,10 @@ impl<'d> DocImporter<'d> {
                         "```",
                         double_newlines,
                         false,
+                        false,
                     )
             }
-            Some(b'u') => self.try_url_tag(out, double_newlines, allow_type_links),
+            Some(b'u') => self.try_url_tag(out, double_newlines, allow_type_links, true),
             Some(b'g') => self.try_wrapped_tag(
                 out,
                 "[gdscript]",
@@ -202,11 +217,20 @@ impl<'d> DocImporter<'d> {
                 "```",
                 double_newlines,
                 false,
+                false,
             ),
             _ => false,
         };
 
-        matched || self.try_markdown_link(out) || self.try_bracket_link(out, allow_type_links)
+        if matched {
+            return true;
+        }
+
+        if starts_with_known_tag(self.remaining()) {
+            return false;
+        }
+
+        self.try_markdown_link(out) || self.try_bracket_link(out, allow_type_links)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -219,6 +243,7 @@ impl<'d> DocImporter<'d> {
         suffix: &str,
         double_newlines: bool,
         allow_type_links: bool,
+        allow_tags: bool,
     ) -> bool {
         if !self.remaining().starts_with(opening_tag) {
             return false;
@@ -228,8 +253,13 @@ impl<'d> DocImporter<'d> {
         let start_len = out.len();
         self.pos += opening_tag.len();
         out.push_str(prefix);
-        // Only keep the wrapper if the matching closing tag exists.
-        if !self.parse_until(out, Some(closing_tag), double_newlines, allow_type_links) {
+        if !self.parse_until(
+            out,
+            Some(closing_tag),
+            double_newlines,
+            allow_type_links,
+            allow_tags,
+        ) {
             out.truncate(start_len);
             self.pos = start_pos;
             return false;
@@ -243,6 +273,7 @@ impl<'d> DocImporter<'d> {
         out: &mut String,
         double_newlines: bool,
         allow_type_links: bool,
+        allow_tags: bool,
     ) -> bool {
         const PREFIX: &str = "[url=";
         const SUFFIX: &str = "[/url]";
@@ -262,7 +293,13 @@ impl<'d> DocImporter<'d> {
         let start_len = out.len();
         self.pos += end_of_opening_tag + 1;
         out.push('[');
-        if !self.parse_until(out, Some(SUFFIX), double_newlines, allow_type_links) {
+        if !self.parse_until(
+            out,
+            Some(SUFFIX),
+            double_newlines,
+            allow_type_links,
+            allow_tags,
+        ) {
             out.truncate(start_len);
             self.pos = start_pos;
             return false;
@@ -283,7 +320,7 @@ impl<'d> DocImporter<'d> {
         let start_len = out.len();
         self.pos += OPENING_TAG.len();
         // `[codeblocks]` is a container for nested language blocks, not a literal fence itself.
-        if !self.parse_until(out, Some(CLOSING_TAG), false, true) {
+        if !self.parse_until(out, Some(CLOSING_TAG), false, true, true) {
             out.truncate(start_len);
             self.pos = start_pos;
             return false;
@@ -312,7 +349,7 @@ impl<'d> DocImporter<'d> {
         out.push_str("```");
         out.push_str(lang);
         // The body is literal fenced code, so bracket roles should not be interpreted inside it.
-        if !self.parse_until(out, Some(SUFFIX), false, false) {
+        if !self.parse_until(out, Some(SUFFIX), false, false, false) {
             out.truncate(start_len);
             self.pos = start_pos;
             return false;
@@ -371,8 +408,27 @@ impl<'d> DocImporter<'d> {
             return true;
         }
 
-        // Escape unsupported roles so Rustdoc shows the original Godot syntax verbatim.
-        if is_unimplemented_role(content) {
+        if let Some(signal_name) = content.strip_prefix("signal ") {
+            self.pos += whole.len();
+            write_code_span(out, signal_name);
+            return true;
+        }
+
+        if let Some(annotation) = content.strip_prefix("annotation ") {
+            self.pos += whole.len();
+            write_code_span(out, annotation);
+            return true;
+        }
+
+        if let Some(ty_name) = content.strip_prefix("constructor ") {
+            self.pos += whole.len();
+            out.push('`');
+            out.push_str(ty_name);
+            out.push_str("()`");
+            return true;
+        }
+
+        if is_escaped_role(content) {
             self.pos += whole.len();
             write_str!(out, "\\{whole}");
             return true;
@@ -387,26 +443,24 @@ impl<'d> DocImporter<'d> {
         false
     }
 
-    fn write_type_link(&self, out: &mut String, class_name: &str) {
-        if special_cases::is_godot_type_deleted(class_name)
-            || matches_primitive_type(class_name)
-            || matches_ignored_links(class_name)
-        {
-            out.push_str(class_name);
-        } else if class_name == "@GlobalScope" {
+    fn write_type_link(&self, out: &mut String, ty_name: &str) {
+        if special_cases::is_godot_type_deleted(ty_name) || matches_ignored_links(ty_name) {
+            out.push_str(ty_name);
+        } else if matches_primitive_type(ty_name) {
+            write_code_span(out, ty_name);
+        } else if ty_name == "@GlobalScope" {
             out.push_str("[@GlobalScope][crate::global]");
         } else {
             let is_link_to_surrounding_class = self
                 .surrounding_rust_name
                 .as_deref()
-                .is_some_and(|name| name == conv::to_pascal_case(class_name));
+                .is_some_and(|name| name == conv::to_pascal_case(ty_name));
 
             if is_link_to_surrounding_class {
-                // Avoid redundant self-links in docs for the class currently being generated.
-                write_str!(out, "`{class_name}`");
+                write_code_span(out, ty_name);
             } else {
-                let path = get_class_rust_path(class_name, self.ctx);
-                write_str!(out, "[{class_name}][{path}]");
+                let path = get_class_rust_path(ty_name, self.ctx);
+                write_code_link(out, ty_name, &path);
             }
         }
     }
@@ -429,6 +483,22 @@ impl<'d> DocImporter<'d> {
     }
 }
 
+fn write_code_span(out: &mut String, text: &str) {
+    out.push('`');
+    out.push_str(text);
+    out.push('`');
+}
+
+fn write_code_link(out: &mut String, label: &str, path: &str) {
+    out.push('[');
+    out.push('`');
+    out.push_str(label);
+    out.push('`');
+    out.push_str("][");
+    out.push_str(path);
+    out.push(']');
+}
+
 fn is_ident_like(str: &str) -> bool {
     !str.is_empty()
         && str
@@ -443,15 +513,26 @@ fn is_type_link(str: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '@')
 }
 
-fn is_unimplemented_role(str: &str) -> bool {
+fn starts_with_known_tag(str: &str) -> bool {
+    str.starts_with("[b]")
+        || str.starts_with("[i]")
+        || str.starts_with("[kbd]")
+        || str.starts_with("[code skip-lint]")
+        || str.starts_with("[code]")
+        || str.starts_with("[codeblocks]")
+        || str.starts_with("[codeblock]")
+        || str.starts_with("[codeblock lang=")
+        || str.starts_with("[csharp]")
+        || str.starts_with("[gdscript]")
+        || str.starts_with("[url=")
+}
+
+fn is_escaped_role(str: &str) -> bool {
     let Some((role, _)) = str.split_once(' ') else {
         return false;
     };
 
-    matches!(
-        role,
-        "annotation" | "constant" | "member" | "enum" | "constructor" | "signal"
-    )
+    matches!(role, "constant" | "member" | "enum")
 }
 
 fn convert_to_method_path(
@@ -621,8 +702,7 @@ mod tests {
         })
     }
 
-    // TODO: Type links should render class names as code spans instead of Markdown links.
-    // Checks that bare Godot type links are imported as Rust doc links.
+    // Bare Godot type links become Rustdoc links with code-formatted labels.
     #[test]
     fn type__engine_classes() {
         let description = "Left side, usually used for [Control] or [StyleBox]-derived classes.";
@@ -631,11 +711,10 @@ mod tests {
 
         assert_eq!(
             actual,
-            "Left side, usually used for [Control][crate::classes::Control] or [StyleBox][crate::classes::StyleBox]-derived classes."
+            "Left side, usually used for [`Control`][crate::classes::Control] or [`StyleBox`][crate::classes::StyleBox]-derived classes."
         );
     }
 
-    // TODO: Type links should render builtin type names with backticks inside links.
     #[test]
     fn type__builtin_and_member_role() {
         let description = "Link [member Vector2.x] and [member Vector2.y] on [Vector2] or \
@@ -646,12 +725,11 @@ mod tests {
         assert_eq!(
             actual,
             "Link \\[member Vector2.x] and \\[member Vector2.y] on \
-            [Vector2][crate::builtin::Vector2] or [Vector3][crate::builtin::Vector3]. Use \
+            [`Vector2`][crate::builtin::Vector2] or [`Vector3`][crate::builtin::Vector3]. Use \
             `\"suffix:px/s\"` for the editor unit suffix."
         );
     }
 
-    // TODO: Type links should render class names with backticks inside links.
     // Existing Markdown links must stay untouched while later bare type links are still imported.
     #[test]
     fn type__preserves_markdown_link() {
@@ -661,7 +739,7 @@ mod tests {
 
         assert_eq!(
             actual,
-            "See [reference](https://example.com) and [Node][crate::classes::Node]."
+            "See [reference](https://example.com) and [`Node`][crate::classes::Node]."
         );
     }
 
@@ -674,9 +752,9 @@ mod tests {
         assert_eq!(actual, "Use [@GlobalScope][crate::global].");
     }
 
-    // Sentinel test: @GDScript stays plain until there is a dedicated Rust target for it.
+    // Bare `@GDScript` stays plain until there is a dedicated Rust target for it.
     #[test]
-    fn type__gdscript__todo() {
+    fn type__gdscript_plain_text() {
         let description = "See [@GDScript].";
 
         let actual = import_doc_for_test(description, None);
@@ -684,17 +762,15 @@ mod tests {
         assert_eq!(actual, "See @GDScript.");
     }
 
-    // TODO: Primitive type links should render as code spans (backticks).
     #[test]
     fn type__primitive_links() {
         let description = "Use [int], [float], and [bool].";
 
         let actual = import_doc_for_test(description, None);
 
-        assert_eq!(actual, "Use int, float, and bool.");
+        assert_eq!(actual, "Use `int`, `float`, and `bool`.");
     }
 
-    // TODO: Non-surrounding class names should render as code spans (backticks).
     // Links to the current class are rendered as code to avoid redundant Markdown links.
     #[test]
     fn type__surrounding_class() {
@@ -702,7 +778,7 @@ mod tests {
 
         let actual = import_doc_for_test(description, Some("Node"));
 
-        assert_eq!(actual, "See `Node` and [Object][crate::classes::Object].");
+        assert_eq!(actual, "See `Node` and [`Object`][crate::classes::Object].");
     }
 
     #[test]
@@ -751,9 +827,9 @@ mod tests {
         );
     }
 
-    // Sentinel test: fenced code blocks must keep bracketed type-like text literal.
+    // Fenced code blocks keep bracketed type-like text literal.
     #[test]
-    fn code_block__type__todo() {
+    fn code_block__type_literal() {
         let description = "[codeblock]\n[Node]\n[/codeblock]";
 
         let actual = import_doc_for_test(description, None);
@@ -812,22 +888,22 @@ mod tests {
 
         let actual = import_doc_for_test(description, None);
 
-        assert_eq!(actual, "Use `x` and `[text](address)`.");
+        assert_eq!(actual, "Use `x` and `[url=address]text[/url]`.");
     }
 
-    // Guards the current regex order so unsupported roles inside [code] stay escaped.
+    // Inline code keeps bracket roles literal.
     #[test]
-    fn code__escapes_member_role() {
+    fn code__member_literal() {
         let description = "Literal [code][member Vector2.x][/code].";
 
         let actual = import_doc_for_test(description, None);
 
-        assert_eq!(actual, "Literal `\\[member Vector2.x]`.");
+        assert_eq!(actual, "Literal `[member Vector2.x]`.");
     }
 
-    // Sentinel test: inline code spans must keep bracketed type-like text literal.
+    // Inline code spans keep bracketed type-like text literal.
     #[test]
-    fn code__type__todo() {
+    fn code__type_literal() {
         let description = "Literal [code][Node][/code].";
 
         let actual = import_doc_for_test(description, None);
@@ -835,14 +911,14 @@ mod tests {
         assert_eq!(actual, "Literal `[Node]`.");
     }
 
-    // Sentinel test: unresolved method links inside [code] stay escaped rather than turning into links.
+    // Inline code keeps method roles literal.
     #[test]
-    fn code__method__todo() {
+    fn code__method_literal() {
         let description = "Literal [code][method lerp][/code].";
 
         let actual = import_doc_for_test(description, None);
 
-        assert_eq!(actual, "Literal `\\[method lerp]`.");
+        assert_eq!(actual, "Literal `[method lerp]`.");
     }
 
     #[test]
@@ -905,34 +981,34 @@ mod tests {
         assert_eq!(actual, "Press `Ctrl + S`.");
     }
 
-    // Sentinel test: unsupported roles stay escaped until there is dedicated Markdown handling for them.
+    // Signal roles fall back to code-formatted text.
     #[test]
-    fn signal___todo() {
+    fn signal__code_fallback() {
         let description = "Emit [signal pressed].";
 
         let actual = import_doc_for_test(description, None);
 
-        assert_eq!(actual, "Emit \\[signal pressed].");
+        assert_eq!(actual, "Emit `pressed`.");
     }
 
-    // Sentinel test: unsupported roles stay escaped until there is dedicated Markdown handling for them.
+    // Annotation roles fall back to code-formatted text.
     #[test]
-    fn annotation___todo() {
+    fn annotation__code_fallback() {
         let description = "Use [annotation @GDScript.@rpc].";
 
         let actual = import_doc_for_test(description, None);
 
-        assert_eq!(actual, "Use \\[annotation @GDScript.@rpc].");
+        assert_eq!(actual, "Use `@GDScript.@rpc`.");
     }
 
-    // Sentinel test: unsupported roles stay escaped until there is dedicated Markdown handling for them.
+    // Constructor roles fall back to code-formatted text.
     #[test]
-    fn constructor___todo() {
+    fn constructor__code_fallback() {
         let description = "Create [constructor Transform2D].";
 
         let actual = import_doc_for_test(description, None);
 
-        assert_eq!(actual, "Create \\[constructor Transform2D].");
+        assert_eq!(actual, "Create `Transform2D()`.");
     }
 
     // A type-like bracket directly followed by `(http...)` must stay a Markdown link, not a Rust doc link.
@@ -953,31 +1029,28 @@ mod tests {
 
         assert_eq!(
             actual,
-            "Use [AnimationNode][crate::classes::AnimationNode](s)."
+            "Use [`AnimationNode`][crate::classes::AnimationNode](s)."
         );
     }
 
-    // Sentinel test: an unclosed BBCode tag like `[b]` is currently rendered as a class link,
-    // mirroring the prior regex behavior where `type_links` matched any bracketed alphanumeric
-    // identifier after `replace_simple_tags` had consumed properly closed `[b]...[/b]`.
+    // Unterminated BBCode stays literal instead of falling through into type-link parsing.
     #[test]
-    fn type__unclosed_bbcode__todo() {
+    fn bbcode__unclosed_tag_literal() {
         let description = "[b]hello";
 
         let actual = import_doc_for_test(description, None);
 
-        assert_eq!(actual, "[b][crate::classes::B]hello");
+        assert_eq!(actual, "[b]hello");
     }
 
-    // Inline `[b]...[/b]` inside `[code]...[/code]` is rendered as bold, matching the prior regex
-    // order where `bold_tags` ran before `code_tags`.
+    // Inline code keeps nested BBCode literal.
     #[test]
     fn code__nested_bold() {
         let description = "Use [code][b]x[/b][/code].";
 
         let actual = import_doc_for_test(description, None);
 
-        assert_eq!(actual, "Use `**x**`.");
+        assert_eq!(actual, "Use `[b]x[/b]`.");
     }
 
     // Empty brackets `[]` are passed through untouched.
@@ -990,8 +1063,7 @@ mod tests {
         assert_eq!(actual, "Edge case: [].");
     }
 
-    // A `[param ...]` whose name is not an identifier (e.g. contains `-`) is left untouched,
-    // matching the old `param_links` regex which required `[a-zA-Z0-9_]+`.
+    // A `[param ...]` whose name is not an identifier, such as `foo-bar`, is left untouched.
     #[test]
     fn param__non_ident_left_literal() {
         let description = "Bad name [param foo-bar].";
