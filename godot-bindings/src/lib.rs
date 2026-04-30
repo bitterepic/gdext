@@ -62,7 +62,7 @@ impl GodotVersion {
     pub(crate) fn is_newer_than_latest(&self) -> bool {
         let (_latest_major, latest_minor, _latest_patch): (u8, u8, u8) = LATEST_API_VERSION;
 
-        self.minor >= latest_minor
+        self.minor > latest_minor
     }
 }
 

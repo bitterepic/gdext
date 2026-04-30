@@ -55,7 +55,7 @@ pub fn load_gdextension_interface_json(watch: &mut StopWatch) -> Cow<'static, st
     rerun_on_changed(&godot_bin);
     watch.record("locate_godot");
 
-    if read_godot_version(&godot_bin).is_newer_than_latest() {
+    if !read_godot_version(&godot_bin).is_newer_than_latest() {
         watch.record("load_prebuilt_header_json");
         return gdextension_api::load_gdextension_interface_json();
     }
