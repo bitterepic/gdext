@@ -22,7 +22,9 @@ use crate::private::handle_panic;
 
 /// Create a new async background task.
 ///
-/// This function allows creating a new async task in which Godot signals can be awaited, like it is possible in GDScript. The
+/// This function allows creating a new async task in which Godot signals can be awaited, like it is possible in GDScript. Your parent method calling 
+/// this function usually must using a Gd<Self> pointer instead of a Self reference so that the
+/// state can be captured and bound.  The
 /// [`TaskHandle`] that is returned provides synchronous introspection into the current state of the task.
 ///
 /// Signals can be converted to futures in the following ways:
@@ -41,8 +43,59 @@ use crate::private::handle_panic;
 /// If called from any other thread than the main thread.
 ///
 /// # Examples
-/// With typed signals:
+/// An example using timers:
 ///
+/// ```no_run
+/// # use godot::prelude::*;
+///
+/// #[derive(GodotClass)]
+/// #[class(init, base=Node)]
+/// struct Game {
+///    base: Base<Node>,
+/// }
+///
+/// #[godot_api]
+/// impl INode for Game {
+///     fn ready(&mut self) {
+///         // Use `connect_other_gd` so that `Self::show_messages` recieves a
+///         // `Gd<Self>` pointer instead of `&mut Self` reference.
+///         self.bind()
+///             .get_node_as::<Player>("Player")
+///             .signals()
+///             .hit()
+///             .builder()
+///             .connect_other_gd(self, Self::show_messages);
+///     }
+/// }
+/// 
+/// #[godot_api]
+/// impl Game {
+///     // A simple async function that implements sleep using Godot timers
+///     async fn sleep(&self, duration: f64) {
+///         let timer = self.base().get_tree().create_timer(duration);
+///         // Use a future to wait for the timout signal
+///         timer.signals().timeout().to_future().await;
+///     }
+///
+///     // Use `#[func(gd_self)]` when you want to recieve a `Gd<Self>` pointer
+///     // instead of `&mut Self` reference from a signal connected in the
+///     // Godot editor.
+///     #[func(gd_self)]
+///     fn show_messages(this: Gd<Self>) {
+///         // Spawn will capture the `this` variable which can't be done
+///         // with `&mut self` because it is a reference avoiding various
+///         // ownership issues.
+///         godot::task::spawn(async move {
+///             godot_print!("Start!");
+///             this.bind().sleep(1.0).await;
+///             godot_print!("One second later!")
+///         });
+///     }
+/// 
+/// }
+/// ```
+///
+/// With typed signals:
 /// ```no_run
 /// # use godot::prelude::*;
 /// #[derive(GodotClass)]
