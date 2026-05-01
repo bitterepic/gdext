@@ -37,7 +37,7 @@ pub fn import_function_docs(fun: &dyn Function, ctx: &Context, view: &ApiView) -
     let surrounding_class_name = fun.surrounding_class();
     let surrounding_class = surrounding_class_name.and_then(|name| view.find_engine_class(name));
     let imported_doc = import_docs(doc, surrounding_class, ctx, view);
-    let imported_doc = format!("\n# Godot docs\n{imported_doc}");
+    // let imported_doc = format!("\n# Godot docs\n{imported_doc}"); -- no title at the moment.
     Some(imported_doc)
 }
 
@@ -50,12 +50,83 @@ fn matches_ignored_links(class: &str) -> bool {
     class == "@GDScript"
 }
 
+/// Flags controlling how a parse region is rendered.
+#[derive(Copy, Clone)]
+struct ParseMode {
+    /// Convert single `\n` in source to `\n\n` (Markdown paragraph break).
+    double_newlines: bool,
+    /// Turn `[Type]` brackets into Rustdoc links; off inside code regions.
+    allow_type_links: bool,
+    /// Recurse into BBCode tags; off inside code regions where content is literal.
+    allow_tags: bool,
+}
+
+impl ParseMode {
+    /// Top-level prose: paragraph breaks, type links, BBCode all enabled.
+    const TOP: Self = Self {
+        double_newlines: true,
+        allow_type_links: true,
+        allow_tags: true,
+    };
+    /// Inside fenced/inline code: keep content literal, no paragraph breaks, no recursion.
+    const CODE: Self = Self {
+        double_newlines: false,
+        allow_type_links: false,
+        allow_tags: false,
+    };
+
+    /// Derive inner-content mode for a wrapped tag.
+    ///
+    /// Formatting tags (`[b]`, `[i]`, `[kbd]`) inherit the outer mode so nested links/tags work.
+    /// Code tags switch to [`Self::CODE`] so brackets inside code stay literal.
+    fn inherit_for(self, tag: &WrappedTag) -> Self {
+        if tag.allow_inner {
+            Self {
+                double_newlines: self.double_newlines,
+                allow_type_links: self.allow_type_links,
+                allow_tags: true,
+            }
+        } else {
+            Self::CODE
+        }
+    }
+}
+
+/// BBCode tag with a fixed opener/closer and a literal Markdown wrapping.
+///
+/// Used for tags whose opener has no dynamic attribute. Tags with attributes
+/// (`[url=...]`, `[codeblock lang=...]`) are handled by separate parsers.
+struct WrappedTag {
+    /// BBCode opener, e.g. `"[b]"`.
+    open: &'static str,
+    /// BBCode closer, e.g. `"[/b]"`.
+    close: &'static str,
+    /// Markdown to emit before inner content, e.g. `"**"` or `"```gdscript"`.
+    prefix: &'static str,
+    /// Markdown to emit after inner content, e.g. `"**"` or `"```"`.
+    suffix: &'static str,
+    /// If true, inner content is parsed with the outer mode (formatting tags like `[b]`, `[i]`, `[kbd]`).
+    /// If false, inner content is parsed in [`ParseMode::CODE`] (fenced/inline code blocks).
+    allow_inner: bool,
+}
+
+// Order matters: longer prefix first when prefixes overlap (`[code skip-lint]` before `[code]`).
+#[rustfmt::skip]
+const WRAPPED_TAGS: &[WrappedTag] = &[
+    WrappedTag { open: "[b]",              close: "[/b]",         prefix: "**",            suffix: "**",  allow_inner: true  },
+    WrappedTag { open: "[i]",              close: "[/i]",         prefix: "_",             suffix: "_",   allow_inner: true  },
+    WrappedTag { open: "[kbd]",            close: "[/kbd]",       prefix: "`",             suffix: "`",   allow_inner: true  },
+    WrappedTag { open: "[code skip-lint]", close: "[/code]",      prefix: "`",             suffix: "`",   allow_inner: false },
+    WrappedTag { open: "[code]",           close: "[/code]",      prefix: "`",             suffix: "`",   allow_inner: false },
+    WrappedTag { open: "[codeblock]",      close: "[/codeblock]", prefix: "```gdscript",   suffix: "```", allow_inner: false },
+    WrappedTag { open: "[gdscript]",       close: "[/gdscript]",  prefix: "```gdscript",   suffix: "```", allow_inner: false },
+    WrappedTag { open: "[csharp]",         close: "[/csharp]",    prefix: "```csharp",     suffix: "```", allow_inner: false },
+];
+
 struct DocImporter<'d> {
     doc: &'d str,
     pos: usize,
     surrounding_class: Option<&'d Class>,
-    // Pascal-case Rust name of the surrounding class, cached to avoid recomputing per type link.
-    surrounding_rust_name: Option<String>,
     ctx: &'d Context<'d>,
     view: &'d ApiView<'d>,
 }
@@ -67,22 +138,34 @@ impl<'d> DocImporter<'d> {
         ctx: &'d Context<'d>,
         view: &'d ApiView<'d>,
     ) -> Self {
-        let surrounding_rust_name = surrounding_class.map(|c| c.name().rust_ty.to_string());
         Self {
             doc,
             pos: 0,
             surrounding_class,
-            surrounding_rust_name,
             ctx,
             view,
         }
     }
 
     fn import(mut self) -> String {
-        let mut out = String::with_capacity(self.doc.len());
-        let ok = self.parse_until(&mut out, None, true, true, true);
+        // Output grows ~3-4x when type links expand to `[`Foo`][crate::classes::Foo]`; reserve up front.
+        let mut out = String::with_capacity(self.doc.len() * 4);
+        let ok = self.parse_until(&mut out, None, ParseMode::TOP);
         debug_assert!(ok, "top-level parse_until without closing tag must succeed");
         out
+    }
+
+    /// Snapshot of `(self.pos, out.len())` for transactional rollback on failed sub-parses.
+    fn checkpoint(&self, out: &str) -> (usize, usize) {
+        (self.pos, out.len())
+    }
+
+    /// Restore both input position and output length from a [`Self::checkpoint`].
+    /// Used when a sub-parser starts emitting then fails (e.g. unterminated tag) and must
+    /// leave the source byte-for-byte for the fallback parser to consume.
+    fn rollback(&mut self, out: &mut String, cp: (usize, usize)) {
+        self.pos = cp.0;
+        out.truncate(cp.1);
     }
 
     // Parses the doc, writing rendered output into `out`.
@@ -93,12 +176,9 @@ impl<'d> DocImporter<'d> {
         &mut self,
         out: &mut String,
         closing_tag: Option<&str>,
-        double_newlines: bool,
-        allow_type_links: bool,
-        allow_tags: bool,
+        mode: ParseMode,
     ) -> bool {
-        let start_pos = self.pos;
-        let start_len = out.len();
+        let cp = self.checkpoint(out);
 
         while self.pos < self.doc.len() {
             if let Some(close) = closing_tag
@@ -108,17 +188,15 @@ impl<'d> DocImporter<'d> {
                 return true;
             }
 
-            if allow_tags
-                && self.remaining().starts_with('[')
-                && self.try_parse_tag(out, double_newlines, allow_type_links)
+            if mode.allow_tags && self.remaining().starts_with('[') && self.try_parse_tag(out, mode)
             {
                 continue;
             }
 
-            // SAFETY: loop guard ensures self.pos < self.doc.len(), so a char is present.
+            // unwrap(): loop guard ensures self.pos < self.doc.len(), so a char is present.
             let ch = self.remaining().chars().next().unwrap();
             self.pos += ch.len_utf8();
-            if ch == '\n' && double_newlines {
+            if ch == '\n' && mode.double_newlines {
                 out.push_str("\n\n");
             } else {
                 out.push(ch);
@@ -128,101 +206,31 @@ impl<'d> DocImporter<'d> {
         if closing_tag.is_none() {
             true
         } else {
-            out.truncate(start_len);
-            self.pos = start_pos;
+            self.rollback(out, cp);
             false
         }
     }
 
-    fn try_parse_tag(
-        &mut self,
-        out: &mut String,
-        double_newlines: bool,
-        allow_type_links: bool,
-    ) -> bool {
-        // Dispatch by the byte after `[` to avoid repeated `starts_with()` checks.
-        // If a real opener is unterminated, leave it literal instead of falling through into bracket-link parsing.
-        let after_bracket = self.doc.as_bytes().get(self.pos + 1).copied();
-        let matched = match after_bracket {
-            Some(b'b') => self.try_wrapped_tag(
-                out,
-                "[b]",
-                "[/b]",
-                "**",
-                "**",
-                double_newlines,
-                allow_type_links,
-                true,
-            ),
-            Some(b'i') => self.try_wrapped_tag(
-                out,
-                "[i]",
-                "[/i]",
-                "_",
-                "_",
-                double_newlines,
-                allow_type_links,
-                true,
-            ),
-            Some(b'k') => self.try_wrapped_tag(
-                out,
-                "[kbd]",
-                "[/kbd]",
-                "`",
-                "`",
-                double_newlines,
-                allow_type_links,
-                true,
-            ),
-            Some(b'c') => {
-                self.try_wrapped_tag(
-                    out,
-                    "[code skip-lint]",
-                    "[/code]",
-                    "`",
-                    "`",
-                    false,
-                    false,
-                    false,
-                ) || self.try_wrapped_tag(out, "[code]", "[/code]", "`", "`", false, false, false)
-                    || self.try_codeblocks_tag(out)
-                    || self.try_wrapped_tag(
-                        out,
-                        "[codeblock]",
-                        "[/codeblock]",
-                        "```gdscript",
-                        "```",
-                        false,
-                        false,
-                        false,
-                    )
-                    || self.try_codeblock_lang_tag(out)
-                    || self.try_wrapped_tag(
-                        out,
-                        "[csharp]",
-                        "[/csharp]",
-                        "```csharp",
-                        "```",
-                        double_newlines,
-                        false,
-                        false,
-                    )
+    /// Dispatch a `[...]` opener to the matching parser.
+    ///
+    /// Tries parsers in order:
+    /// 1. Static [`WRAPPED_TAGS`] table.
+    /// 2. Attribute-bearing tags: `[url=...]`, `[codeblocks]`, `[codeblock lang=...]`.
+    /// 3. If a known BBCode opener is unterminated, return `false` -> the caller emits the bracket literally.
+    /// 4. Generic Markdown link or type-link role.
+    fn try_parse_tag(&mut self, out: &mut String, mode: ParseMode) -> bool {
+        // Try the static table of wrapped tags first. An unterminated real opener is emitted as-is,
+        // not reinterpreted by the bracket-link parser below.
+        for tag in WRAPPED_TAGS {
+            if self.remaining().starts_with(tag.open) && self.try_wrapped_tag(out, tag, mode) {
+                return true;
             }
-            Some(b'u') => self.try_url_tag(out, double_newlines, allow_type_links, true),
-            Some(b'g') => self.try_wrapped_tag(
-                out,
-                "[gdscript]",
-                "[/gdscript]",
-                "```gdscript",
-                "```",
-                double_newlines,
-                false,
-                false,
-            ),
-            _ => false,
-        };
+        }
 
-        if matched {
+        if self.try_url_tag(out, mode)
+            || self.try_codeblocks_tag(out)
+            || self.try_codeblock_lang_tag(out)
+        {
             return true;
         }
 
@@ -230,78 +238,54 @@ impl<'d> DocImporter<'d> {
             return false;
         }
 
-        self.try_markdown_link(out) || self.try_bracket_link(out, allow_type_links)
+        self.try_markdown_link(out) || self.try_bracket_link(out, mode.allow_type_links)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn try_wrapped_tag(
-        &mut self,
-        out: &mut String,
-        opening_tag: &str,
-        closing_tag: &str,
-        prefix: &str,
-        suffix: &str,
-        double_newlines: bool,
-        allow_type_links: bool,
-        allow_tags: bool,
-    ) -> bool {
-        if !self.remaining().starts_with(opening_tag) {
+    fn try_wrapped_tag(&mut self, out: &mut String, tag: &WrappedTag, mode: ParseMode) -> bool {
+        if !self.remaining().starts_with(tag.open) {
             return false;
         }
 
-        let start_pos = self.pos;
-        let start_len = out.len();
-        self.pos += opening_tag.len();
-        out.push_str(prefix);
-        if !self.parse_until(
-            out,
-            Some(closing_tag),
-            double_newlines,
-            allow_type_links,
-            allow_tags,
-        ) {
-            out.truncate(start_len);
-            self.pos = start_pos;
+        let cp = self.checkpoint(out);
+        self.pos += tag.open.len();
+        out.push_str(tag.prefix);
+        if !self.parse_until(out, Some(tag.close), mode.inherit_for(tag)) {
+            self.rollback(out, cp);
             return false;
         }
-        out.push_str(suffix);
+        out.push_str(tag.suffix);
         true
     }
 
-    fn try_url_tag(
-        &mut self,
-        out: &mut String,
-        double_newlines: bool,
-        allow_type_links: bool,
-        allow_tags: bool,
-    ) -> bool {
+    // Consume an opener of the form `<prefix>VALUE]`. Advances `self.pos` past the `]`.
+    // Returns the slice between `<prefix>` and `]` (the attribute value), or None if no match.
+    //
+    // Shortcoming: searches for the first `]` in the remaining input, so an attribute value containing `]` (e.g. `[url=https://x/a]b]`)
+    // would truncate. Godot's docs should not produce such values in practice, so this is accepted.
+    fn try_consume_attr_opener(&mut self, prefix: &str) -> Option<&'d str> {
+        let remaining = self.remaining();
+        if !remaining.starts_with(prefix) {
+            return None;
+        }
+        let end = remaining.find(']')?;
+        let value = &remaining[prefix.len()..end];
+        self.pos += end + 1;
+        Some(value)
+    }
+
+    fn try_url_tag(&mut self, out: &mut String, mode: ParseMode) -> bool {
         const PREFIX: &str = "[url=";
         const SUFFIX: &str = "[/url]";
 
-        let remaining = self.remaining();
-        if !remaining.starts_with(PREFIX) {
-            return false;
-        }
-
-        // Assumes `]` does not occur inside the URL value (true for percent-encoded URLs).
-        let Some(end_of_opening_tag) = remaining.find(']') else {
+        let cp = self.checkpoint(out);
+        let Some(url) = self.try_consume_attr_opener(PREFIX) else {
             return false;
         };
-        let url = &remaining[PREFIX.len()..end_of_opening_tag];
+        let url = url.to_owned(); // detach borrow from `self` before recursing.
 
-        let start_pos = self.pos;
-        let start_len = out.len();
-        self.pos += end_of_opening_tag + 1;
         out.push('[');
-        if !self.parse_until(
-            out,
-            Some(SUFFIX),
-            double_newlines,
-            allow_type_links,
-            allow_tags,
-        ) {
-            out.truncate(start_len);
-            self.pos = start_pos;
+        if !self.parse_until(out, Some(SUFFIX), mode) {
+            self.rollback(out, cp);
             return false;
         }
         write_str!(out, "]({url})");
@@ -316,13 +300,16 @@ impl<'d> DocImporter<'d> {
             return false;
         }
 
-        let start_pos = self.pos;
-        let start_len = out.len();
+        let cp = self.checkpoint(out);
         self.pos += OPENING_TAG.len();
         // `[codeblocks]` is a container for nested language blocks, not a literal fence itself.
-        if !self.parse_until(out, Some(CLOSING_TAG), false, true, true) {
-            out.truncate(start_len);
-            self.pos = start_pos;
+        let inner = ParseMode {
+            double_newlines: false,
+            allow_type_links: true,
+            allow_tags: true,
+        };
+        if !self.parse_until(out, Some(CLOSING_TAG), inner) {
+            self.rollback(out, cp);
             return false;
         }
         true
@@ -332,32 +319,27 @@ impl<'d> DocImporter<'d> {
         const PREFIX: &str = "[codeblock lang=";
         const SUFFIX: &str = "[/codeblock]";
 
-        let remaining = self.remaining();
-        if !remaining.starts_with(PREFIX) {
-            return false;
-        }
-
-        // Assumes `]` does not occur inside the lang attribute value.
-        let Some(end_of_opening_tag) = remaining.find(']') else {
+        let cp = self.checkpoint(out);
+        let Some(lang) = self.try_consume_attr_opener(PREFIX) else {
             return false;
         };
-        let lang = &remaining[PREFIX.len()..end_of_opening_tag];
+        let lang = lang.to_owned(); // detach borrow from `self` before recursing.
 
-        let start_pos = self.pos;
-        let start_len = out.len();
-        self.pos += end_of_opening_tag + 1;
-        out.push_str("```");
-        out.push_str(lang);
+        write_str!(out, "```{lang}");
         // The body is literal fenced code, so bracket roles should not be interpreted inside it.
-        if !self.parse_until(out, Some(SUFFIX), false, false, false) {
-            out.truncate(start_len);
-            self.pos = start_pos;
+        if !self.parse_until(out, Some(SUFFIX), ParseMode::CODE) {
+            self.rollback(out, cp);
             return false;
         }
         out.push_str("```");
         true
     }
 
+    /// Pass-through for inline Markdown links `[text](http(s)://...)` already present in source.
+    /// Bare `[Type](suffix)` (no `http`) is left for [`Self::try_bracket_link`] to handle.
+    ///
+    /// Shortcoming: scans for the first `]` and `)`, so nested brackets in link text (e.g. `[a [Node] b](http://x)`) would mis-parse.
+    /// Not produced by Godot in practice.
     fn try_markdown_link(&mut self, out: &mut String) -> bool {
         let remaining = self.remaining();
         if !remaining.starts_with('[') {
@@ -382,6 +364,10 @@ impl<'d> DocImporter<'d> {
         true
     }
 
+    /// Handle role-prefixed brackets (`[param X]`, `[method Class.fn]`, `[signal X]`,
+    /// `[annotation X]`, `[constructor Type]`), bare type links (`[Node]`), and
+    /// "escaped" roles whose target we cannot resolve (`[member X.y]`, `[constant X]`, ...).
+    /// Unrecognized brackets return `false` so the caller emits them literally.
     fn try_bracket_link(&mut self, out: &mut String, allow_type_links: bool) -> bool {
         let remaining = self.remaining();
         if !remaining.starts_with('[') {
@@ -420,6 +406,12 @@ impl<'d> DocImporter<'d> {
             return true;
         }
 
+        if let Some(constant) = content.strip_prefix("constant ") {
+            self.pos += whole.len();
+            write_code_span(out, constant);
+            return true;
+        }
+
         if let Some(ty_name) = content.strip_prefix("constructor ") {
             self.pos += whole.len();
             out.push('`');
@@ -443,18 +435,24 @@ impl<'d> DocImporter<'d> {
         false
     }
 
+    /// Emit Markdown for `[Foo]`. Branches:
+    /// - deleted/`@GDScript` → plain text;
+    /// - `int`/`float`/`bool` → `` `int` `` (no link target);
+    /// - hardcoded specials (`@GlobalScope`) → fixed link;
+    /// - link to surrounding class → `` `Self` ``-style code span (avoid self-link);
+    /// - else → `` [`Foo`][crate::classes::Foo] `` Rustdoc reference link.
     fn write_type_link(&self, out: &mut String, ty_name: &str) {
         if special_cases::is_godot_type_deleted(ty_name) || matches_ignored_links(ty_name) {
             out.push_str(ty_name);
         } else if matches_primitive_type(ty_name) {
             write_code_span(out, ty_name);
-        } else if ty_name == "@GlobalScope" {
-            out.push_str("[@GlobalScope][crate::global]");
+        } else if let Some(hardcoded) = matches_hardcoded_type(ty_name) {
+            out.push_str(hardcoded);
         } else {
+            // Compare on the Godot name to skip the per-link `to_pascal_case` allocation.
             let is_link_to_surrounding_class = self
-                .surrounding_rust_name
-                .as_deref()
-                .is_some_and(|name| name == conv::to_pascal_case(ty_name));
+                .surrounding_class
+                .is_some_and(|c| c.name().godot_ty == ty_name);
 
             if is_link_to_surrounding_class {
                 write_code_span(out, ty_name);
@@ -465,6 +463,8 @@ impl<'d> DocImporter<'d> {
         }
     }
 
+    /// Emit Markdown for `[method Class.fn]` or `[method fn]` (latter resolved against surrounding class).
+    /// Falls back to escaping the original `[method ...]` literal if the target cannot be resolved.
     fn write_method_link(&self, out: &mut String, whole_match: &str, method_path: &str) {
         if let Some(method_path) =
             convert_to_method_path(method_path, self.surrounding_class, self.ctx, self.view)
@@ -472,7 +472,7 @@ impl<'d> DocImporter<'d> {
             let (_, method_name) = method_path
                 .rsplit_once("::")
                 .expect("rsplit_once should return a method name");
-            write_str!(out, "[{method_name}][`{method_path}`]");
+            write_str!(out, "[`{method_name}`][`{method_path}`]");
         } else {
             write_str!(out, "\\{whole_match}");
         }
@@ -483,12 +483,14 @@ impl<'d> DocImporter<'d> {
     }
 }
 
+/// Emit `` `text` ``.
 fn write_code_span(out: &mut String, text: &str) {
     out.push('`');
     out.push_str(text);
     out.push('`');
 }
 
+/// Emit a Rustdoc reference link `` [`label`][path] ``.
 fn write_code_link(out: &mut String, label: &str, path: &str) {
     out.push('[');
     out.push('`');
@@ -499,6 +501,7 @@ fn write_code_link(out: &mut String, label: &str, path: &str) {
     out.push(']');
 }
 
+/// Bracketed name acceptable as a parameter/identifier (ASCII alphanumeric + underscore).
 fn is_ident_like(str: &str) -> bool {
     !str.is_empty()
         && str
@@ -506,33 +509,36 @@ fn is_ident_like(str: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
+/// Bracketed name shaped like a Godot class link: ASCII alphanumeric, optionally prefixed with `@`
+/// for global namespaces (`@GlobalScope`, `@GDScript`). `@` only allowed at position 0.
 fn is_type_link(str: &str) -> bool {
-    !str.is_empty()
-        && str
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '@')
-}
-
-fn starts_with_known_tag(str: &str) -> bool {
-    str.starts_with("[b]")
-        || str.starts_with("[i]")
-        || str.starts_with("[kbd]")
-        || str.starts_with("[code skip-lint]")
-        || str.starts_with("[code]")
-        || str.starts_with("[codeblocks]")
-        || str.starts_with("[codeblock]")
-        || str.starts_with("[codeblock lang=")
-        || str.starts_with("[csharp]")
-        || str.starts_with("[gdscript]")
-        || str.starts_with("[url=")
-}
-
-fn is_escaped_role(str: &str) -> bool {
-    let Some((role, _)) = str.split_once(' ') else {
+    let mut chars = str.chars();
+    let Some(first) = chars.next() else {
         return false;
     };
+    if !first.is_ascii_alphanumeric() && first != '@' {
+        return false;
+    }
+    chars.all(|ch| ch.is_ascii_alphanumeric())
+}
 
-    matches!(role, "constant" | "member" | "enum")
+/// True if `str` begins with a recognized BBCode opener. Used by [`DocImporter::try_parse_tag`]
+/// to emit unterminated known openers as-is, instead of letting the bracket-link parser reinterpret them.
+fn starts_with_known_tag(str: &str) -> bool {
+    WRAPPED_TAGS.iter().any(|t| str.starts_with(t.open))
+        || str.starts_with("[url=")
+        || str.starts_with("[codeblocks]")
+        || str.starts_with("[codeblock lang=")
+}
+
+/// Roles we recognize but cannot resolve to a Rust target — emit them as escaped literal `\[role X]`
+/// so Markdown does not interpret them as links. Accepts both `[role arg]` and bare `[role]`.
+fn is_escaped_role(str: &str) -> bool {
+    let role = str.split_once(' ').map(|(r, _)| r).unwrap_or(str);
+    matches!(
+        role,
+        "constant" | "member" | "enum" | "signal" | "annotation" | "constructor"
+    )
 }
 
 fn convert_to_method_path(
@@ -561,8 +567,10 @@ fn convert_to_method_path(
     let link_godot_method = util::safe_ident(link_godot_method).to_string();
 
     // These cover renamed helpers and special symbols that do not map 1:1 through the API view.
-    if let (true, ret) = matches_hardcoded_method(link_godot_class, &link_godot_method) {
-        return ret;
+    match matches_hardcoded_method(link_godot_class, &link_godot_method) {
+        Hardcoded::Mapped(path) => return Some(path),
+        Hardcoded::Suppressed => return None,
+        Hardcoded::NotMatched => {}
     }
 
     if let Some(class) = view.find_engine_class(&TyName::from_godot(link_godot_class))
@@ -578,27 +586,50 @@ fn convert_to_method_path(
             return None;
         }
         if method.is_virtual() {
-            if class.is_final {
+            return if class.is_final {
                 // Final classes don't have an associated trait with virtual methods.
-                return None;
+                None
             } else {
                 let path = format!(
                     "crate::classes::{}::{}",
                     class.name().virtual_trait_name(),
                     rust_method_name
                 );
-                return Some(path.into());
-            }
+                Some(path.into())
+            };
         }
+
+        // Use the Rust name; covers `special_cases::maybe_rename_class_method`.
+        // Examples: `Object.get_script` -> `raw_get_script`, `GDScript.new` -> `instantiate`.
+        let rust_class_path = get_class_rust_path(link_godot_class, ctx);
+        return Some(format!("{rust_class_path}::{rust_method_name}").into());
     }
 
+    // Fallback when class/method is not in the API view (e.g. unknown class link): strip the leading underscore
+    // as a best-effort guess at the Rust name.
     let godot_method_name = link_godot_method.trim_start_matches("_");
     let rust_class_path = get_class_rust_path(link_godot_class, ctx);
     Some(format!("{rust_class_path}::{godot_method_name}").into())
 }
 
-fn matches_hardcoded_method(godot_class: &str, godot_method: &str) -> (bool, Option<CowStr>) {
-    let path = match (godot_class, godot_method) {
+fn matches_hardcoded_type(godot_class: &str) -> Option<&'static str> {
+    match godot_class {
+        "@GlobalScope" => Some("[@GlobalScope][crate::global]"),
+        _ => None,
+    }
+}
+
+enum Hardcoded {
+    /// Matched a special-cased mapping; use this Rust path.
+    Mapped(CowStr),
+    /// Matched, but link should be dropped (no Rust target — e.g. arbitrary `@GDScript` symbols).
+    Suppressed,
+    /// No special case; fall through to the regular API-view lookup.
+    NotMatched,
+}
+
+fn matches_hardcoded_method(godot_class: &str, godot_method: &str) -> Hardcoded {
+    let path: CowStr = match (godot_class, godot_method) {
         ("Object", "free") => "crate::obj::Gd::free".into(),
         ("Object", "get_instance_id") => "crate::obj::Gd::instance_id".into(),
         ("Object", "notification") => "crate::classes::Object::notify".into(),
@@ -627,12 +658,12 @@ fn matches_hardcoded_method(godot_class: &str, godot_method: &str) -> (bool, Opt
         ("@GlobalScope", "is_instance_valid") => "crate::obj::Gd::is_instance_valid".into(),
         ("@GDScript", "load") => "crate::tools::load".into(),
         ("@GDScript", "save") => "crate::tools::save".into(),
-        ("@GlobalScope", _) => format!("crate::global::{}", godot_method).into(),
-        ("@GDScript", _) => return (true, None),
-        _ => return (false, None),
+        ("@GlobalScope", _) => format!("crate::global::{godot_method}").into(),
+        ("@GDScript", _) => return Hardcoded::Suppressed,
+        _ => return Hardcoded::NotMatched,
     };
 
-    (true, Some(path))
+    Hardcoded::Mapped(path)
 }
 
 fn convert_builtin_types(type_name: &str) -> Option<&'static str> {
@@ -644,13 +675,15 @@ fn convert_builtin_types(type_name: &str) -> Option<&'static str> {
     }
 }
 
+// Optimization: results could be memoized via `HashMap<&str, CowStr>` on `Context` to avoid re-formatting the same `crate::classes::MyClass`
+// path per type link. Only worthwhile if doc import shows up in codegen profiles.
 fn get_class_rust_path(godot_class_name: &str, ctx: &Context) -> CowStr {
     if let Some(hardcoded_builtin_type) = convert_builtin_types(godot_class_name) {
         return hardcoded_builtin_type.into();
     }
 
     let is_builtin = ctx.is_builtin(godot_class_name);
-    let rust_class_name = crate::conv::to_pascal_case(godot_class_name);
+    let rust_class_name = conv::to_pascal_case(godot_class_name);
     if is_builtin {
         format!("crate::builtin::{rust_class_name}").into()
     } else {
@@ -791,7 +824,7 @@ mod tests {
         assert_eq!(
             actual,
             "Compare `LEFT` and `RIGHT` variants.\n\n\
-            Use [is_match][`crate::classes::InputEvent::is_match`] with \\[constant KEY_LOCATION_UNSPECIFIED] or \\[enum KeyLocation]."
+            Use [`is_match`][`crate::classes::InputEvent::is_match`] with `KEY_LOCATION_UNSPECIFIED` or \\[enum KeyLocation]."
         );
     }
 
@@ -803,8 +836,32 @@ mod tests {
 
         assert_eq!(
             actual,
-            "Call [get_node_as][`crate::classes::Node::get_node_as`] to fetch a child."
+            "Call [`get_node_as`][`crate::classes::Node::get_node_as`] to fetch a child."
         );
+    }
+
+    // Regression: methods renamed via `special_cases::maybe_rename_class_method` must use the Rust name in the link.
+    // Here type-safe replacement: `Object.get_script` -> `raw_get_script`.
+    #[test]
+    fn method__renamed_via_special_case() {
+        let description = "See [method Object.get_script].";
+
+        let actual = import_doc_for_test(description, None);
+
+        assert_eq!(
+            actual,
+            "See [`raw_get_script`][`crate::classes::Object::raw_get_script`]."
+        );
+    }
+
+    // `[constant X]` is rendered as code, since we have no Rust target for arbitrary constants.
+    #[test]
+    fn constant__code_fallback() {
+        let description = "See [constant NOTIFICATION_ENTER_TREE].";
+
+        let actual = import_doc_for_test(description, None);
+
+        assert_eq!(actual, "See `NOTIFICATION_ENTER_TREE`.");
     }
 
     #[test]
@@ -852,8 +909,8 @@ mod tests {
 
         assert_eq!(codeblocks_actual, "alpha\nbeta");
         assert_eq!(codeblock_lang_actual, "```text\nalpha\nbeta\n```");
-        assert_eq!(gdscript_actual, "```gdscript\n\nprint(\"hi\")\n\n```");
-        assert_eq!(csharp_actual, "```csharp\n\nGD.Print(\"hi\");\n\n```");
+        assert_eq!(gdscript_actual, "```gdscript\nprint(\"hi\")\n```");
+        assert_eq!(csharp_actual, "```csharp\nGD.Print(\"hi\");\n```");
     }
 
     #[test]
@@ -931,7 +988,7 @@ mod tests {
         assert_eq!(
             actual,
             "MIDI note release.\n\n\
-            **Note:** Some devices send \\[constant MIDI_MESSAGE_NOTE_ON] with \
+            **Note:** Some devices send `MIDI_MESSAGE_NOTE_ON` with \
             \\[member InputEventMIDI.velocity] = `0`."
         );
     }
