@@ -22,9 +22,8 @@ use crate::private::handle_panic;
 
 /// Create a new async background task.
 ///
-/// This function allows creating a new async task in which Godot signals can be awaited, like it is possible in GDScript. Your parent method calling 
-/// this function usually must using a Gd<Self> pointer instead of a Self reference so that the
-/// state can be captured and bound.  The
+/// This function allows creating a new async task in which Godot signals can be awaited, like it is possible in GDScript. If a reference to `Self` is 
+/// not flexible enough regarding lifetimes, your function calling `spawn()` can capture the state in a ` Gd<Self>` pointer instead. The
 /// [`TaskHandle`] that is returned provides synchronous introspection into the current state of the task.
 ///
 /// Signals can be converted to futures in the following ways:
