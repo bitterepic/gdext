@@ -147,7 +147,10 @@ runs:
       run: |
         $GDRUST_GODOT_BIN --headless --dump-extension-api
         mv extension_api.json $RUNNER_DIR/godot_bin/extension_api.json
+        $GDRUST_GODOT_BIN --headless --dump-gdextension-interface-json
+        mv gdextension_interface.json $RUNNER_DIR/godot_bin/gdextension_interface.json
         echo "GDRUST_GODOT_API_JSON=$RUNNER_DIR/godot_bin/extension_api.json" >> $GITHUB_ENV
+        echo "GDRUST_GODOT_INTERFACE_JSON=$RUNNER_DIR/godot_bin/gdextension_interface.json" >> $GITHUB_ENV
       shell: bash
 
     # else

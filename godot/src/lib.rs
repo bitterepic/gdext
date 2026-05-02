@@ -119,7 +119,9 @@
 //!   `api-custom` feature requires specifying `GDRUST_GODOT_BIN` environment variable with a path to your Godot4 binary.
 //!
 //!   The `api-custom-json` feature requires specifying `GDRUST_GODOT_API_JSON` environment variable with a path
-//!   to your custom-defined `extension_api.json`.<br><br>
+//!   to your custom-defined `extension_api.json`. The custom header should be set with the `GDRUST_GODOT_INTERFACE_JSON` environment variable
+//!   when generated extension API targets a Godot version greater than the latest stable – otherwise you might encounter compile errors
+//!   if the library tries to use an interface method that is not yet included in the latest stable header. <br><br>
 //!
 //! * **`double-precision`**
 //!
