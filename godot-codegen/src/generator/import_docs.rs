@@ -435,30 +435,31 @@ impl<'d> DocImporter<'d> {
     }
 
     /// Emit Markdown for `[Foo]`. Branches:
-    /// - deleted/`@GDScript` → plain text;
-    /// - `int`/`float`/`bool` → `` `int` `` (no link target);
-    /// - hardcoded specials (`@GlobalScope`) → fixed link;
-    /// - link to surrounding class → `` `Self` ``-style code span (avoid self-link);
-    /// - else → `` [`Foo`][crate::classes::Foo] `` Rustdoc reference link.
+    /// - `@GDScript` -> plain text (no dedicated Rust module target);
+    /// - deleted/disabled class -> `` `Foo` `` code span (class exists but has no Rust binding);
+    /// - `int`/`float`/`bool` -> `` `int` `` (no link target);
+    /// - hardcoded specials (`@GlobalScope`) -> fixed link;
+    /// - link to surrounding class -> `` `Self` ``-style code span (avoid self-link);
+    /// - else -> `` [`Foo`][crate::classes::Foo] `` Rustdoc reference link.
     fn write_type_link(&self, out: &mut String, ty_name: &str) {
-        if special_cases::is_godot_type_deleted(ty_name) || matches_ignored_links(ty_name) {
+        if matches_ignored_links(ty_name) {
             out.push_str(ty_name);
         } else if matches_primitive_type(ty_name) {
             write_code_span(out, ty_name);
         } else if let Some(hardcoded) = matches_hardcoded_type(ty_name) {
             out.push_str(hardcoded);
-        } else {
+        } else if !self.ctx.is_builtin(ty_name) && special_cases::is_class_deleted_str(ty_name) {
+            // Engine class excluded from codegen (or genuinely deleted): no link target. Builtins are always available, so skip the check.
+            write_code_span(out, ty_name);
+        } else if self
+            .surrounding_class
+            .is_some_and(|c| c.name().godot_ty == ty_name)
+        {
             // Compare on the Godot name to skip the per-link `to_pascal_case` allocation.
-            let is_link_to_surrounding_class = self
-                .surrounding_class
-                .is_some_and(|c| c.name().godot_ty == ty_name);
-
-            if is_link_to_surrounding_class {
-                write_code_span(out, ty_name);
-            } else {
-                let path = get_class_rust_path(ty_name, self.ctx);
-                write_code_link(out, ty_name, &path);
-            }
+            write_code_span(out, ty_name);
+        } else {
+            let path = get_class_rust_path(ty_name, self.ctx);
+            write_code_link(out, ty_name, &path);
         }
     }
 
@@ -583,8 +584,7 @@ impl<'d> DocImporter<'d> {
     ) -> Option<(&'d Class, &'d Enum, &'d Enumerator)> {
         let mut current = starting_class;
         loop {
-            if let Some((enum_, enumerator)) = find_enumerator_in_class(current, const_godot_name)
-            {
+            if let Some((enum_, enumerator)) = find_enumerator_in_class(current, const_godot_name) {
                 return Some((current, enum_, enumerator));
             }
             let base_name = current.base_class.as_ref()?;
@@ -692,25 +692,40 @@ fn convert_to_method_path(
             return None;
         };
 
-    if special_cases::is_godot_type_deleted(link_godot_class) {
-        return None;
-    }
-
     let link_godot_method = util::safe_ident(link_godot_method).to_string();
 
     // These cover renamed helpers and special symbols that do not map 1:1 through the API view.
+    // Run before the deletion check, so hardcoded mappings (e.g. `@GlobalScope.*`) keep working.
     match matches_hardcoded_method(link_godot_class, &link_godot_method) {
         Hardcoded::Mapped(path) => return Some(path),
         Hardcoded::Suppressed => return None,
         Hardcoded::NotMatched => {}
     }
 
-    if let Some(class) = view.find_engine_class(&TyName::from_godot(link_godot_class))
-        && let Some(method) = class
+    // Skip for builtins (Vector2, Transform2D, ...): they are always available and the exclusion list doesn't apply to them.
+    if !ctx.is_builtin(link_godot_class) && special_cases::is_class_deleted_str(link_godot_class) {
+        return None;
+    }
+
+    if let Some(class) = view.find_engine_class(&TyName::from_godot(link_godot_class)) {
+        let Some(method) = class
             .methods
             .iter()
             .find(|method| method.godot_name() == link_godot_method)
-    {
+        else {
+            // Class is in the API view but the method isn't (excluded from default codegen, or shadowed by an `_ex` builder).
+            // Fabricating a path would yield a broken link.
+            return None;
+        };
+
+        // Type-safe replacements (e.g. `Object.get_script`): the codegen-generated method has a `raw_` prefix and is `pub(crate)`;
+        // the public Rust replacement keeps the original Godot name. Link to the public replacement.
+        if special_cases::is_class_method_replaced_with_type_safe(class.name(), &link_godot_method)
+        {
+            let rust_class_path = get_class_rust_path(link_godot_class, ctx);
+            return Some(format!("{rust_class_path}::{link_godot_method}").into());
+        }
+
         let rust_method_name = method.name();
 
         // Skip links to private methods.
@@ -732,13 +747,13 @@ fn convert_to_method_path(
         }
 
         // Use the Rust name; covers `special_cases::maybe_rename_class_method`.
-        // Examples: `Object.get_script` -> `raw_get_script`, `GDScript.new` -> `instantiate`.
+        // Example: `GDScript.new` -> `instantiate`.
         let rust_class_path = get_class_rust_path(link_godot_class, ctx);
         return Some(format!("{rust_class_path}::{rust_method_name}").into());
     }
 
-    // Fallback when class/method is not in the API view (e.g. unknown class link): strip the leading underscore
-    // as a best-effort guess at the Rust name.
+    // Fallback for classes not represented in the engine API view: builtins (Vector2, Transform2D, ...) whose methods are not captured in
+    // ApiView. Strip the leading underscore as a best-effort guess at the Rust name.
     let godot_method_name = link_godot_method.trim_start_matches("_");
     let rust_class_path = get_class_rust_path(link_godot_class, ctx);
     Some(format!("{rust_class_path}::{godot_method_name}").into())
@@ -868,15 +883,16 @@ mod tests {
     }
 
     // Bare Godot type links become Rustdoc links with code-formatted labels.
+    // Uses classes always present in default codegen (`Node`, `Resource`); excluded classes resolve to a code span instead.
     #[test]
     fn type__engine_classes() {
-        let description = "Left side, usually used for [Control] or [StyleBox]-derived classes.";
+        let description = "Inherits from [Node] or [Resource], depending on use case.";
 
         let actual = import_doc_for_test(description, None);
 
         assert_eq!(
             actual,
-            "Left side, usually used for [`Control`][crate::classes::Control] or [`StyleBox`][crate::classes::StyleBox]-derived classes."
+            "Inherits from [`Node`][crate::classes::Node] or [`Resource`][crate::classes::Resource], depending on use case."
         );
     }
 
@@ -927,6 +943,17 @@ mod tests {
         assert_eq!(actual, "See @GDScript.");
     }
 
+    // Deleted/disabled classes (e.g. Android-only) become a backtick code span, not a broken link.
+    #[test]
+    #[cfg(not(target_os = "android"))]
+    fn type__deleted_class_backtick() {
+        let description = "See [JavaClass].";
+
+        let actual = import_doc_for_test(description, None);
+
+        assert_eq!(actual, "See `JavaClass`.");
+    }
+
     #[test]
     fn type__primitive_links() {
         let description = "Use [int], [float], and [bool].";
@@ -973,17 +1000,16 @@ mod tests {
         );
     }
 
-    // Regression: methods renamed via `special_cases::maybe_rename_class_method` must use the Rust name in the link.
-    // Here type-safe replacement: `Object.get_script` -> `raw_get_script`.
+    // Type-safe replacements link to the public Rust method (which keeps the original Godot name), not the `pub(crate) raw_*` codegen variant.
     #[test]
-    fn method__renamed_via_special_case() {
+    fn method__type_safe_replacement() {
         let description = "See [method Object.get_script].";
 
         let actual = import_doc_for_test(description, None);
 
         assert_eq!(
             actual,
-            "See [`raw_get_script`][`crate::classes::Object::raw_get_script`]."
+            "See [`get_script`][`crate::classes::Object::get_script`]."
         );
     }
 
@@ -1309,14 +1335,11 @@ mod tests {
 
     #[test]
     fn type__followed_by_plural_suffix() {
-        let description = "Use [AnimationNode](s).";
+        let description = "Use [Node](s).";
 
         let actual = import_doc_for_test(description, None);
 
-        assert_eq!(
-            actual,
-            "Use [`AnimationNode`][crate::classes::AnimationNode](s)."
-        );
+        assert_eq!(actual, "Use [`Node`][crate::classes::Node](s).");
     }
 
     // Unterminated BBCode stays literal instead of falling through into type-link parsing.
