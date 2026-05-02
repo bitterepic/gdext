@@ -55,7 +55,7 @@ use crate::private::handle_panic;
 /// #[godot_api]
 /// impl INode for Game {
 ///     fn ready(&mut self) {
-///         // Use `connect_other_gd` so that `Self::show_messages` recieves a
+///         // Use `connect_other_gd` so that `Self::show_messages` receives a
 ///         // `Gd<Self>` pointer instead of `&mut Self` reference.
 ///         self.bind()
 ///             .get_node_as::<Player>("Player")
