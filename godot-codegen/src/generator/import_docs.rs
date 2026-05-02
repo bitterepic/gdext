@@ -78,8 +78,8 @@ impl ParseMode {
     ///
     /// Formatting tags (`[b]`, `[i]`, `[kbd]`) inherit the outer mode so nested links/tags work.
     /// Code tags switch to [`Self::CODE`] so brackets inside code stay literal.
-    fn inherit_for(self, tag: &WrappedTag) -> Self {
-        if tag.allow_inner {
+    fn inherit_for(self, allow_inner: bool) -> Self {
+        if allow_inner {
             Self {
                 double_newlines: self.double_newlines,
                 allow_type_links: self.allow_type_links,
@@ -91,35 +91,53 @@ impl ParseMode {
     }
 }
 
-/// BBCode tag with a fixed opener/closer and a literal Markdown wrapping.
+/// BBCode tag with a fixed opener/closer.
 ///
 /// Used for tags whose opener has no dynamic attribute. Tags with attributes
 /// (`[url=...]`, `[codeblock lang=...]`) are handled by separate parsers.
-struct WrappedTag {
-    /// BBCode opener, e.g. `"[b]"`.
-    open: &'static str,
-    /// BBCode closer, e.g. `"[/b]"`.
-    close: &'static str,
-    /// Markdown to emit before inner content, e.g. `"**"` or `"```gdscript"`.
-    prefix: &'static str,
-    /// Markdown to emit after inner content, e.g. `"**"` or `"```"`.
-    suffix: &'static str,
-    /// If true, inner content is parsed with the outer mode (formatting tags like `[b]`, `[i]`, `[kbd]`).
-    /// If false, inner content is parsed in [`ParseMode::CODE`] (fenced/inline code blocks).
-    allow_inner: bool,
+enum WrappedTag {
+    /// Tag and its content are emitted, wrapped in Markdown.
+    Render {
+        /// BBCode opener, e.g. `"[b]"`.
+        open: &'static str,
+        /// BBCode closer, e.g. `"[/b]"`.
+        close: &'static str,
+        /// Markdown to emit before inner content, e.g. `"**"` or `"```gdscript"`.
+        prefix: &'static str,
+        /// Markdown to emit after inner content, e.g. `"**"` or `"```"`.
+        suffix: &'static str,
+        /// If true, inner content is parsed with the outer mode (formatting tags like `[b]`, `[i]`, `[kbd]`).
+        /// If false, inner content is parsed in [`ParseMode::CODE`] (fenced/inline code blocks).
+        allow_inner: bool,
+    },
+    /// Tag and its content are dropped entirely. One trailing `\n` already in the output is also consumed,
+    /// so the surrounding block doesn't gain a blank line.
+    Skip {
+        open: &'static str,
+        close: &'static str,
+    },
+}
+
+impl WrappedTag {
+    fn open(&self) -> &'static str {
+        match self {
+            Self::Render { open, .. } | Self::Skip { open, .. } => open,
+        }
+    }
 }
 
 // Order matters: longer prefix first when prefixes overlap (`[code skip-lint]` before `[code]`).
 #[rustfmt::skip]
 const WRAPPED_TAGS: &[WrappedTag] = &[
-    WrappedTag { open: "[b]",              close: "[/b]",         prefix: "**",            suffix: "**",  allow_inner: true  },
-    WrappedTag { open: "[i]",              close: "[/i]",         prefix: "_",             suffix: "_",   allow_inner: true  },
-    WrappedTag { open: "[kbd]",            close: "[/kbd]",       prefix: "`",             suffix: "`",   allow_inner: true  },
-    WrappedTag { open: "[code skip-lint]", close: "[/code]",      prefix: "`",             suffix: "`",   allow_inner: false },
-    WrappedTag { open: "[code]",           close: "[/code]",      prefix: "`",             suffix: "`",   allow_inner: false },
-    WrappedTag { open: "[codeblock]",      close: "[/codeblock]", prefix: "```gdscript",   suffix: "```", allow_inner: false },
-    WrappedTag { open: "[gdscript]",       close: "[/gdscript]",  prefix: "```gdscript",   suffix: "```", allow_inner: false },
-    WrappedTag { open: "[csharp]",         close: "[/csharp]",    prefix: "```csharp",     suffix: "```", allow_inner: false },
+    WrappedTag::Render { open: "[b]",              close: "[/b]",         prefix: "**",          suffix: "**",  allow_inner: true  },
+    WrappedTag::Render { open: "[i]",              close: "[/i]",         prefix: "_",           suffix: "_",   allow_inner: true  },
+    WrappedTag::Render { open: "[kbd]",            close: "[/kbd]",       prefix: "`",           suffix: "`",   allow_inner: true  },
+    WrappedTag::Render { open: "[code skip-lint]", close: "[/code]",      prefix: "`",           suffix: "`",   allow_inner: false },
+    WrappedTag::Render { open: "[code]",           close: "[/code]",      prefix: "`",           suffix: "`",   allow_inner: false },
+    WrappedTag::Render { open: "[codeblock]",      close: "[/codeblock]", prefix: "```gdscript", suffix: "```", allow_inner: false },
+    WrappedTag::Render { open: "[gdscript]",       close: "[/gdscript]",  prefix: "```gdscript", suffix: "```", allow_inner: false },
+    // C# blocks usually just duplicate the adjacent `[gdscript]` block, and we have no C# audience in Rust docs.
+    WrappedTag::Skip   { open: "[csharp]",         close: "[/csharp]" },
 ];
 
 struct DocImporter<'d> {
@@ -241,18 +259,43 @@ impl<'d> DocImporter<'d> {
     }
 
     fn try_wrapped_tag(&mut self, out: &mut String, tag: &WrappedTag, mode: ParseMode) -> bool {
-        if !self.remaining().starts_with(tag.open) {
+        if !self.remaining().starts_with(tag.open()) {
             return false;
         }
 
         let cp = self.checkpoint(out);
-        self.pos += tag.open.len();
-        out.push_str(tag.prefix);
-        if !self.parse_until(out, Some(tag.close), mode.inherit_for(tag)) {
-            self.rollback(out, cp);
-            return false;
+        self.pos += tag.open().len();
+
+        match *tag {
+            WrappedTag::Render {
+                close,
+                prefix,
+                suffix,
+                allow_inner,
+                ..
+            } => {
+                out.push_str(prefix);
+                if !self.parse_until(out, Some(close), mode.inherit_for(allow_inner)) {
+                    self.rollback(out, cp);
+                    return false;
+                }
+                out.push_str(suffix);
+            }
+            WrappedTag::Skip { close, .. } => {
+                // Drop the tag and its body. Content is discarded into a scratch buffer so `parse_until`'s
+                // close-tag matching still works. On EOF without close, roll back to leave the opener literal.
+                let mut scratch = String::new();
+                if !self.parse_until(&mut scratch, Some(close), ParseMode::CODE) {
+                    self.rollback(out, cp);
+                    return false;
+                }
+
+                // Consume one trailing `\n` already in `out`, so the dropped block doesn't leave a blank line behind it.
+                if out.ends_with('\n') {
+                    out.pop();
+                }
+            }
         }
-        out.push_str(tag.suffix);
         true
     }
 
@@ -657,7 +700,7 @@ fn is_type_link(str: &str) -> bool {
 /// True if `str` begins with a recognized BBCode opener. Used by [`DocImporter::try_parse_tag`]
 /// to emit unterminated known openers as-is, instead of letting the bracket-link parser reinterpret them.
 fn starts_with_known_tag(str: &str) -> bool {
-    WRAPPED_TAGS.iter().any(|t| str.starts_with(t.open))
+    WRAPPED_TAGS.iter().any(|t| str.starts_with(t.open()))
         || str.starts_with("[url=")
         || str.starts_with("[codeblocks]")
         || str.starts_with("[codeblock lang=")
@@ -1155,7 +1198,8 @@ mod tests {
         assert_eq!(codeblocks_actual, "alpha\nbeta");
         assert_eq!(codeblock_lang_actual, "```text\nalpha\nbeta\n```");
         assert_eq!(gdscript_actual, "```gdscript\nprint(\"hi\")\n```");
-        assert_eq!(csharp_actual, "```csharp\nGD.Print(\"hi\");\n```");
+        assert_eq!(csharp_actual, ""); // C# is currently hidden from Rust docs; it often just duplicates GDScript.
+        // assert_eq!(csharp_actual, "```csharp\nGD.Print(\"hi\");\n```");
     }
 
     #[test]
@@ -1176,10 +1220,7 @@ mod tests {
             "\n\
             ```gdscript\n\
             print(\"hi\")\n\
-            ```\n\
-            ```csharp\n\
-            GD.Print(\"hi\");\n\
-            ```\n"
+            ```\n" // C# is currently hidden from Rust docs; it often just duplicates GDScript.
         );
     }
 
