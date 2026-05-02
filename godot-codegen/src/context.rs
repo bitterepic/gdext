@@ -31,6 +31,9 @@ pub struct Context<'a> {
     notifications_by_class: HashMap<TyName, Vec<(Ident, i32)>>,
     classes_with_signals: HashSet<TyName>,
     notification_enum_names_by_class: HashMap<TyName, NotificationEnum>,
+    /// Maps a Godot notification constant name (e.g. `"NOTIFICATION_READY"`) to (declaring-class enum ident, variant ident)
+    /// (e.g. `(NodeNotification, READY)`).
+    notification_constants_index: HashMap<String, (Ident, Ident)>,
     method_table_indices: HashMap<MethodTableKey, usize>,
     method_table_next_index: HashMap<String, usize>,
 }
@@ -172,6 +175,12 @@ impl<'a> Context<'a> {
 
                     has_notifications = true;
                 }
+
+                let decl_enum_name = format_ident!("{}Notification", class_name.rust_ty);
+                ctx.notification_constants_index.insert(
+                    constant.name.clone(),
+                    (decl_enum_name, rust_constant.clone()),
+                );
 
                 ctx.notifications_by_class
                     .get_mut(class_name)
@@ -350,6 +359,17 @@ impl<'a> Context<'a> {
             .get(class_name)
             .unwrap_or_else(|| panic!("class {} has no notification enum name", class_name.rust_ty))
             .clone()
+    }
+
+    /// Look up a notification constant by its Godot name (e.g. `"NOTIFICATION_READY"`).
+    ///
+    /// Returns `(declaring_class_enum_ident, variant_ident)`, e.g. `(NodeNotification, READY)`.
+    /// The declaring-class enum is a fallback; callers with a surrounding class should prefer
+    /// [`Self::notification_enum_name`] for that class instead.
+    pub fn find_notification_constant(&self, godot_name: &str) -> Option<(&Ident, &Ident)> {
+        self.notification_constants_index
+            .get(godot_name)
+            .map(|(e, v)| (e, v))
     }
 
     pub fn insert_rust_type(&mut self, godot_ty: GodotTy, resolved: RustTy) {

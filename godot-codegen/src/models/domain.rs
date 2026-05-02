@@ -53,13 +53,32 @@ impl ExtensionApi {
 
 pub struct ApiView<'a> {
     class_by_ty: HashMap<TyName, &'a Class>,
+
+    /// Maps Godot enumerator name -> (enum, enumerator) for global-scope enums.
+    ///
+    /// Global enumerator names are unique; they carry the enum name as prefix (e.g. `MIDI_MESSAGE_NOTE_ON` for `MidiMessage`).
+    /// Key is `godot_name` from [`Enumerator`], so lookup is O(1) without iterating all enums.
+    global_enum_constants: HashMap<&'a str, (&'a Enum, &'a Enumerator)>,
 }
 
 impl<'a> ApiView<'a> {
     pub fn new(api: &'a ExtensionApi) -> ApiView<'a> {
         let class_by_ty = api.classes.iter().map(|c| (c.name().clone(), c)).collect();
 
-        Self { class_by_ty }
+        let global_enum_constants = api
+            .global_enums
+            .iter()
+            .flat_map(|e| {
+                e.enumerators
+                    .iter()
+                    .map(move |enumerator| (enumerator.godot_name.as_str(), (e, enumerator)))
+            })
+            .collect();
+
+        Self {
+            class_by_ty,
+            global_enum_constants,
+        }
     }
 
     pub fn get_engine_class(&self, ty: &TyName) -> &'a Class {
@@ -70,6 +89,17 @@ impl<'a> ApiView<'a> {
 
     pub fn find_engine_class(&self, ty: &TyName) -> Option<&'a Class> {
         self.class_by_ty.get(ty).cloned()
+    }
+
+    /// Look up a global enum enumerator by its Godot name, e.g. `"MIDI_MESSAGE_NOTE_ON"`.
+    ///
+    /// Returns the containing [`Enum`] and the matching [`Enumerator`] (both carrying the already-renamed
+    /// Rust identifiers), or `None` if the name does not belong to any global enum.
+    pub fn find_global_enum_constant(
+        &self,
+        godot_name: &str,
+    ) -> Option<(&'a Enum, &'a Enumerator)> {
+        self.global_enum_constants.get(godot_name).copied()
     }
 }
 

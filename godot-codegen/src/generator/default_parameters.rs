@@ -34,7 +34,8 @@ pub fn make_function_definition_with_defaults(
     let simple_fn_name = safe_ident(sig.name());
     let extended_fn_name = format_ident!("{}_ex", simple_fn_name);
     let default_parameter_usage = format!(
-        "To set the default parameters, use [`Self::{extended_fn_name}`] and its builder methods.  See [the book](https://godot-rust.github.io/book/godot-api/functions.html#default-parameters) for detailed usage instructions."
+        "To set the default parameters, use [`{extended_fn_name}`][Self::{extended_fn_name}] and its builder methods.  \
+        See [the book](https://godot-rust.github.io/book/godot-api/functions.html#default-parameters) for detailed usage instructions."
     );
     let vis = functions_common::make_vis(sig.is_private());
 

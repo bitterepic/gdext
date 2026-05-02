@@ -109,8 +109,12 @@ pub fn get_class_method_deprecation(class_name: &TyName, method: &JsonClassMetho
 }
 
 pub fn is_class_deleted(class_name: &TyName) -> bool {
-    codegen_special_cases::is_class_excluded(&class_name.godot_ty)
-        || is_godot_type_deleted(&class_name.godot_ty)
+    is_class_deleted_str(&class_name.godot_ty)
+}
+
+pub fn is_class_deleted_str(godot_class_name: &str) -> bool {
+    codegen_special_cases::is_class_excluded(godot_class_name)
+        || is_godot_type_deleted(godot_class_name)
 }
 
 /// Native-struct types excluded in minimal codegen, because they hold codegen-excluded classes as fields.
@@ -135,7 +139,7 @@ pub fn get_native_struct_definition(struct_name: &str) -> Option<&'static str> {
 }
 
 #[rustfmt::skip]
-pub fn is_godot_type_deleted(godot_ty: &str) -> bool {
+pub(super) fn is_godot_type_deleted(godot_ty: &str) -> bool {
     // Note: parameter can be a class or builtin name, but also something like "enum::AESContext.Mode".
 
     // Exclude experimental APIs unless opted-in.
@@ -1293,11 +1297,21 @@ pub fn is_enum_private(class_name: Option<&TyName>, enum_name: &str) -> bool {
     }
 }
 
+/// Returns the Rust module path of a global Godot enum as a string (instead of `crate::global`).
+pub fn get_global_enum_module_path(enum_name: &str) -> &'static str {
+    match enum_name {
+        "PropertyHint" | "PropertyUsageFlags" | "MethodFlags" => "crate::registry::info",
+        // Godot's JSON spells `VariantType` as `Variant.Type`; accept both since callers may pass either form.
+        "Corner" | "EulerOrder" | "Side" | "VariantType" | "Variant.Type" => "crate::builtin",
+        _ => "crate::global",
+    }
+}
+
 /// Returns the Rust module path of a global Godot enum (instead of `crate::global::EnumName`).
 pub fn get_global_enum_rust_path(enum_name: &str) -> TokenStream {
-    match enum_name {
-        "PropertyHint" | "PropertyUsageFlags" | "MethodFlags" => quote! { crate::registry::info },
-        "Corner" | "EulerOrder" | "Side" => quote! { crate::builtin },
+    match get_global_enum_module_path(enum_name) {
+        "crate::registry::info" => quote! { crate::registry::info },
+        "crate::builtin" => quote! { crate::builtin },
         _ => quote! { crate::global },
     }
 }
