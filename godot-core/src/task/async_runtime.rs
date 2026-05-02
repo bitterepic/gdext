@@ -46,7 +46,6 @@ use crate::private::handle_panic;
 ///
 /// ```no_run
 /// # use godot::prelude::*;
-///
 /// #[derive(GodotClass)]
 /// #[class(init, base=Node)]
 /// struct Game {
