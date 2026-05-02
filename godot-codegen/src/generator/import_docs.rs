@@ -5,6 +5,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::context::Context;
@@ -146,6 +147,9 @@ struct DocImporter<'d> {
     surrounding_class: Option<&'d Class>,
     ctx: &'d Context<'d>,
     view: &'d ApiView<'d>,
+    /// Cache of Godot class name -> Rust crate path (e.g. `"Node"` -> `"crate::classes::Node"`).
+    /// Lives for the duration of one doc-string import; avoids repeated `to_pascal_case` + `format!` per link.
+    path_cache: HashMap<String, String>,
 }
 
 impl<'d> DocImporter<'d> {
@@ -161,6 +165,7 @@ impl<'d> DocImporter<'d> {
             surrounding_class,
             ctx,
             view,
+            path_cache: HashMap::new(),
         }
     }
 
@@ -183,6 +188,16 @@ impl<'d> DocImporter<'d> {
     fn rollback(&mut self, out: &mut String, cp: (usize, usize)) {
         self.pos = cp.0;
         out.truncate(cp.1);
+    }
+
+    /// Advance `self.pos` past `target` without writing anything to output. Returns `true` if `target` was found.
+    fn skip_past(&mut self, target: &str) -> bool {
+        if let Some(offset) = self.doc[self.pos..].find(target) {
+            self.pos += offset + target.len();
+            true
+        } else {
+            false
+        }
     }
 
     // Parses the doc, writing rendered output into `out`.
@@ -282,10 +297,8 @@ impl<'d> DocImporter<'d> {
                 out.push_str(suffix);
             }
             WrappedTag::Skip { close, .. } => {
-                // Drop the tag and its body. Content is discarded into a scratch buffer so `parse_until`'s
-                // close-tag matching still works. On EOF without close, roll back to leave the opener literal.
-                let mut scratch = String::new();
-                if !self.parse_until(&mut scratch, Some(close), ParseMode::CODE) {
+                // Drop the tag and its body. On EOF without close, roll back to leave the opener literal.
+                if !self.skip_past(close) {
                     self.rollback(out, cp);
                     return false;
                 }
@@ -300,19 +313,21 @@ impl<'d> DocImporter<'d> {
     }
 
     // Consume an opener of the form `<prefix>VALUE]`. Advances `self.pos` past the `]`.
-    // Returns the slice between `<prefix>` and `]` (the attribute value), or None if no match.
+    // Returns (start, end) byte offsets within `self.doc` instead of `&str`, so callers can keep parsing with `&mut self`
+    // and reconstruct the slice later without allocating a temporary `String`.
     //
     // Shortcoming: searches for the first `]` in the remaining input, so an attribute value containing `]` (e.g. `[url=https://x/a]b]`)
     // would truncate. Godot's docs should not produce such values in practice, so this is accepted.
-    fn try_consume_attr_opener(&mut self, prefix: &str) -> Option<&'d str> {
+    fn try_consume_attr_opener(&mut self, prefix: &str) -> Option<(usize, usize)> {
         let remaining = self.remaining();
         if !remaining.starts_with(prefix) {
             return None;
         }
         let end = remaining.find(']')?;
-        let value = &remaining[prefix.len()..end];
+        let value_start = self.pos + prefix.len();
+        let value_end = self.pos + end;
         self.pos += end + 1;
-        Some(value)
+        Some((value_start, value_end))
     }
 
     fn try_url_tag(&mut self, out: &mut String, mode: ParseMode) -> bool {
@@ -320,17 +335,17 @@ impl<'d> DocImporter<'d> {
         const SUFFIX: &str = "[/url]";
 
         let cp = self.checkpoint(out);
-        let Some(url) = self.try_consume_attr_opener(PREFIX) else {
+        let Some((url_start, url_end)) = self.try_consume_attr_opener(PREFIX) else {
             return false;
         };
-        let url = url.to_owned(); // detach borrow from `self` before recursing.
 
         out.push('[');
         if !self.parse_until(out, Some(SUFFIX), mode) {
             self.rollback(out, cp);
             return false;
         }
-        write_str!(out, "]({url})");
+        // Re-slice after parse_until: storing offsets avoids borrowing self.doc across the `&mut self` call and a `to_owned()`.
+        write_str!(out, "]({})", &self.doc[url_start..url_end]);
         true
     }
 
@@ -362,12 +377,15 @@ impl<'d> DocImporter<'d> {
         const SUFFIX: &str = "[/codeblock]";
 
         let cp = self.checkpoint(out);
-        let Some(lang) = self.try_consume_attr_opener(PREFIX) else {
+        let Some((lang_start, lang_end)) = self.try_consume_attr_opener(PREFIX) else {
             return false;
         };
-        let lang = lang.to_owned(); // detach borrow from `self` before recursing.
 
-        write_str!(out, "```{lang}");
+        // Write the fence opener first; storing offsets keeps the borrow local so parse_until can still take `&mut self`.
+        {
+            let lang = &self.doc[lang_start..lang_end];
+            write_str!(out, "```{lang}");
+        }
         // The body is literal fenced code, so bracket roles should not be interpreted inside it.
         if !self.parse_until(out, Some(SUFFIX), ParseMode::CODE) {
             self.rollback(out, cp);
@@ -484,7 +502,7 @@ impl<'d> DocImporter<'d> {
     /// - hardcoded specials (`@GlobalScope`) -> fixed link;
     /// - link to surrounding class -> `` `Self` ``-style code span (avoid self-link);
     /// - else -> `` [`Foo`][crate::classes::Foo] `` Rustdoc reference link.
-    fn write_type_link(&self, out: &mut String, ty_name: &str) {
+    fn write_type_link(&mut self, out: &mut String, ty_name: &str) {
         if matches_ignored_links(ty_name) {
             out.push_str(ty_name);
         } else if matches_primitive_type(ty_name) {
@@ -498,19 +516,18 @@ impl<'d> DocImporter<'d> {
             .surrounding_class
             .is_some_and(|c| c.name().godot_ty == ty_name)
         {
-            // Compare on the Godot name to skip the per-link `to_pascal_case` allocation.
             write_code_span(out, ty_name);
         } else {
-            let path = get_class_rust_path(ty_name, self.ctx);
-            write_code_link(out, ty_name, &path);
+            let path = self.cached_class_rust_path(ty_name);
+            write_code_link(out, ty_name, path);
         }
     }
 
     /// Emit Markdown for `[method Class.fn]` or `[method fn]` (latter resolved against surrounding class).
     /// Falls back to escaping the original `[method ...]` literal if the target cannot be resolved.
-    fn write_method_link(&self, out: &mut String, whole_match: &str, method_path: &str) {
+    fn write_method_link(&mut self, out: &mut String, whole_match: &str, method_path: &str) {
         if let Some(method_path) =
-            convert_to_method_path(method_path, self.surrounding_class, self.ctx, self.view)
+            convert_to_method_path(method_path, self.surrounding_class, self.ctx, self.view, &mut self.path_cache)
         {
             let (_, method_name) = method_path
                 .rsplit_once("::")
@@ -635,6 +652,15 @@ impl<'d> DocImporter<'d> {
         }
     }
 
+    /// Return the Rust crate path for a Godot class name, caching the result for the lifetime of this import.
+    fn cached_class_rust_path(&mut self, godot_class_name: &str) -> &str {
+        if !self.path_cache.contains_key(godot_class_name) {
+            let path = get_class_rust_path(godot_class_name, self.ctx).into_owned();
+            self.path_cache.insert(godot_class_name.to_owned(), path);
+        }
+        &self.path_cache[godot_class_name]
+    }
+
     fn remaining(&self) -> &'d str {
         &self.doc[self.pos..]
     }
@@ -721,6 +747,7 @@ fn convert_to_method_path(
     surrounding_class: Option<&Class>,
     ctx: &Context,
     view: &ApiView,
+    path_cache: &mut HashMap<String, String>,
 ) -> Option<CowStr> {
     // Get the class name from the link if it has one, otherwise use the surrounding class's name.
     // For example, in `CanvasItem` docs the link `[method Object.notification]` is owned by `Object`, while bare `[method queue_redraw]`
@@ -749,7 +776,13 @@ fn convert_to_method_path(
         return None;
     }
 
-    let rust_class_path = get_class_rust_path(link_godot_class, ctx);
+    let rust_class_path: &str = {
+        if !path_cache.contains_key(link_godot_class) {
+            let path = get_class_rust_path(link_godot_class, ctx).into_owned();
+            path_cache.insert(link_godot_class.to_owned(), path);
+        }
+        &path_cache[link_godot_class]
+    };
 
     let Some(class) = view.find_engine_class(&TyName::from_godot(link_godot_class)) else {
         // Builtins (Vector2, Transform2D, ...) are not engine classes in the API view; their methods aren't captured here, so we trust the link.
@@ -855,8 +888,6 @@ fn convert_builtin_types(type_name: &str) -> Option<&'static str> {
     }
 }
 
-// Optimization: results could be memoized via `HashMap<&str, CowStr>` on `Context` to avoid re-formatting the same `crate::classes::MyClass`
-// path per type link. Only worthwhile if doc import shows up in codegen profiles.
 fn get_class_rust_path(godot_class_name: &str, ctx: &Context) -> CowStr {
     if let Some(hardcoded_builtin_type) = convert_builtin_types(godot_class_name) {
         return hardcoded_builtin_type.into();
