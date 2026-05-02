@@ -679,10 +679,9 @@ fn convert_to_method_path(
     ctx: &Context,
     view: &ApiView,
 ) -> Option<CowStr> {
-    // Get the class name from the link if it has one, otherwise, use the surrounding class's name.
-    // For example, if we are generating docs for the `CanvasItem` class and see an "Object._notification" link
-    // take "Object" as the class name and "_notification" as the method name. But if we see a "queue_redraw"
-    // link, take the surrounding class's name(in our case it's "CanvasItem") as the class that owns the method.
+    // Get the class name from the link if it has one, otherwise use the surrounding class's name.
+    // For example, in `CanvasItem` docs the link `[method Object.notification]` is owned by `Object`, while bare `[method queue_redraw]`
+    // resolves against the surrounding `CanvasItem`.
     let (link_godot_class, link_godot_method) =
         if let Some((class_name, method_name)) = class_method.split_once('.') {
             (class_name, method_name)
@@ -707,56 +706,47 @@ fn convert_to_method_path(
         return None;
     }
 
-    if let Some(class) = view.find_engine_class(&TyName::from_godot(link_godot_class)) {
-        let Some(method) = class
-            .methods
-            .iter()
-            .find(|method| method.godot_name() == link_godot_method)
-        else {
-            // Class is in the API view but the method isn't (excluded from default codegen, or shadowed by an `_ex` builder).
-            // Fabricating a path would yield a broken link.
-            return None;
-        };
+    let rust_class_path = get_class_rust_path(link_godot_class, ctx);
 
-        // Type-safe replacements (e.g. `Object.get_script`): the codegen-generated method has a `raw_` prefix and is `pub(crate)`;
-        // the public Rust replacement keeps the original Godot name. Link to the public replacement.
-        if special_cases::is_class_method_replaced_with_type_safe(class.name(), &link_godot_method)
-        {
-            let rust_class_path = get_class_rust_path(link_godot_class, ctx);
-            return Some(format!("{rust_class_path}::{link_godot_method}").into());
-        }
+    let Some(class) = view.find_engine_class(&TyName::from_godot(link_godot_class)) else {
+        // Builtins (Vector2, Transform2D, ...) are not engine classes in the API view; their methods aren't captured here, so we trust the link.
+        return Some(format!("{rust_class_path}::{link_godot_method}").into());
+    };
 
-        let rust_method_name = method.name();
+    let Some(method) = class
+        .methods
+        .iter()
+        .find(|method| method.godot_name() == link_godot_method)
+    else {
+        // Class is in the API view but the method isn't (excluded from default codegen, or shadowed by an `_ex` builder).
+        // Fabricating a path would yield a broken link.
+        return None;
+    };
 
-        // Skip links to private methods.
-        if method.is_private_in_final_api() {
-            return None;
-        }
-        if method.is_virtual() {
-            return if class.is_final {
-                // Final classes don't have an associated trait with virtual methods.
-                None
-            } else {
-                let path = format!(
-                    "crate::classes::{}::{}",
-                    class.name().virtual_trait_name(),
-                    rust_method_name
-                );
-                Some(path.into())
-            };
-        }
-
-        // Use the Rust name; covers `special_cases::maybe_rename_class_method`.
-        // Example: `GDScript.new` -> `instantiate`.
-        let rust_class_path = get_class_rust_path(link_godot_class, ctx);
-        return Some(format!("{rust_class_path}::{rust_method_name}").into());
+    // Type-safe replacements (e.g. `Object.get_script`): the codegen-generated method has a `raw_` prefix and is `pub(crate)`;
+    // the public Rust replacement keeps the original Godot name. Link to the public replacement.
+    if special_cases::is_class_method_replaced_with_type_safe(class.name(), &link_godot_method) {
+        return Some(format!("{rust_class_path}::{link_godot_method}").into());
     }
 
-    // Fallback for classes not represented in the engine API view: builtins (Vector2, Transform2D, ...) whose methods are not captured in
-    // ApiView. Strip the leading underscore as a best-effort guess at the Rust name.
-    let godot_method_name = link_godot_method.trim_start_matches("_");
-    let rust_class_path = get_class_rust_path(link_godot_class, ctx);
-    Some(format!("{rust_class_path}::{godot_method_name}").into())
+    if method.is_private_in_final_api() {
+        return None;
+    }
+
+    if method.is_virtual() {
+        // Final classes don't have an associated trait with virtual methods.
+        return (!class.is_final).then(|| {
+            format!(
+                "crate::classes::{}::{}",
+                class.name().virtual_trait_name(),
+                method.name()
+            )
+            .into()
+        });
+    }
+
+    // Use the Rust name; covers `special_cases::maybe_rename_class_method`. Example: `GDScript.new` -> `instantiate`.
+    Some(format!("{rust_class_path}::{}", method.name()).into())
 }
 
 fn matches_hardcoded_type(godot_class: &str) -> Option<&'static str> {

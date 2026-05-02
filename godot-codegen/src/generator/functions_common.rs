@@ -188,8 +188,16 @@ pub fn make_function_definition(
     let (maybe_deprecated, _maybe_expect_deprecated) = make_deprecation_attribute(sig);
     let maybe_specific_doc = &meta.specific_docs;
 
+    // If a sectioned doc precedes the Godot doc (`# Safety` from unsafe pointers, `# Specific notes for this function` from utility-fn extra
+    // docs), prefix the Godot doc with its own `# Godot docs` heading so the sections don't visually merge. Standalone, no heading.
     let mut maybe_godot_doc = TokenStream::new();
     if let Some(doc) = import_docs::import_function_docs(sig, ctx, view) {
+        let has_preceding_section = sig.common().is_unsafe || !meta.specific_docs.is_empty();
+        let doc = if has_preceding_section {
+            format!("\n# Godot docs\n{doc}")
+        } else {
+            doc
+        };
         maybe_godot_doc = quote! { #[doc = #doc] };
     }
 
