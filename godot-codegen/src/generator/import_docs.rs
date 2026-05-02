@@ -8,7 +8,7 @@
 use std::fmt::Write as _;
 
 use crate::context::Context;
-use crate::models::domain::{ApiView, Class, ClassLike, Function, TyName};
+use crate::models::domain::{ApiView, Class, ClassLike, Enum, Enumerator, Function, TyName};
 use crate::{conv, special_cases, util};
 
 type CowStr = std::borrow::Cow<'static, str>;
@@ -37,7 +37,6 @@ pub fn import_function_docs(fun: &dyn Function, ctx: &Context, view: &ApiView) -
     let surrounding_class_name = fun.surrounding_class();
     let surrounding_class = surrounding_class_name.and_then(|name| view.find_engine_class(name));
     let imported_doc = import_docs(doc, surrounding_class, ctx, view);
-    // let imported_doc = format!("\n# Godot docs\n{imported_doc}"); -- no title at the moment.
     Some(imported_doc)
 }
 
@@ -222,7 +221,7 @@ impl<'d> DocImporter<'d> {
         // Try the static table of wrapped tags first. An unterminated real opener is emitted as-is,
         // not reinterpreted by the bracket-link parser below.
         for tag in WRAPPED_TAGS {
-            if self.remaining().starts_with(tag.open) && self.try_wrapped_tag(out, tag, mode) {
+            if self.try_wrapped_tag(out, tag, mode) {
                 return true;
             }
         }
@@ -408,7 +407,7 @@ impl<'d> DocImporter<'d> {
 
         if let Some(constant) = content.strip_prefix("constant ") {
             self.pos += whole.len();
-            write_code_span(out, constant);
+            self.write_constant_link(out, constant);
             return true;
         }
 
@@ -478,6 +477,121 @@ impl<'d> DocImporter<'d> {
         }
     }
 
+    /// Emit a link for `[constant X]` or `[constant ClassName.X]`.
+    ///
+    /// Lookup order for **bare** references (`[constant X]`, no dot):
+    /// 1. Notification constants (`NOTIFICATION_*`) -- link to `crate::classes::notify::XyzNotification::X`, using the surrounding class's
+    ///    notification enum when available, or the declaring class's otherwise.
+    /// 2. Enum constants from the surrounding class's hierarchy (walks up via `base_class`) -- link to the sidecar module of the class in the
+    ///    chain that declares the enum.
+    /// 3. Global enum enumerators (e.g. `MIDI_MESSAGE_NOTE_ON`) -- link to `crate::global::MyEnum::XYZ`.
+    /// 4. Fallback to a plain code span.
+    ///
+    /// For **class-scoped** references (`[constant ClassName.X]`, dot present):
+    /// 1. Class enums (via [`Self::find_class_enum_constant`]).
+    /// 2. Notification constants for the specified class.
+    /// 3. Fallback to a plain code span.
+    fn write_constant_link(&self, out: &mut String, godot_const_ref: &str) {
+        if let Some((class_godot_name, const_godot_name)) = godot_const_ref.split_once('.') {
+            // Class-scoped reference: e.g. "Node.NOTIFICATION_READY" or "Object.CONNECT_DEFERRED".
+            if let Some((class, enum_, enumerator)) =
+                self.find_class_enum_constant(class_godot_name, const_godot_name)
+            {
+                let module = format!("crate::classes::{}", class.mod_name().rust_mod);
+                write_enum_const_link(out, &module, &enum_.name, &enumerator.name);
+                return;
+            }
+
+            // Notification constant for the explicitly-specified class (e.g. "Node.NOTIFICATION_READY").
+            if !class_godot_name.starts_with('@')
+                && let Some((_decl_enum, variant)) =
+                    self.ctx.find_notification_constant(const_godot_name)
+            {
+                let class_ty = TyName::from_godot(class_godot_name);
+                if self.view.find_engine_class(&class_ty).is_some() {
+                    let enum_name = self.ctx.notification_enum_name(&class_ty).name;
+                    write_enum_const_link(out, "crate::classes::notify", &enum_name, &variant);
+                    return;
+                }
+            }
+        } else {
+            // Global-scope reference -- try notifications, then class hierarchy, then global enums.
+
+            // Notification constants (e.g. "NOTIFICATION_READY" -> "NodeNotification::READY").
+            if let Some((decl_enum_ident, variant)) =
+                self.ctx.find_notification_constant(godot_const_ref)
+            {
+                let enum_ident = self
+                    .surrounding_class
+                    .map(|c| self.ctx.notification_enum_name(c.name()).name)
+                    .unwrap_or_else(|| decl_enum_ident.clone());
+                write_enum_const_link(out, "crate::classes::notify", &enum_ident, &variant);
+                return;
+            }
+
+            // Enum constant from the surrounding class or one of its base classes.
+            if let Some(surrounding_class) = self.surrounding_class
+                && let Some((class, enum_, enumerator)) =
+                    self.find_class_enum_constant_in_hierarchy(surrounding_class, godot_const_ref)
+            {
+                let module = format!("crate::classes::{}", class.mod_name().rust_mod);
+                write_enum_const_link(out, &module, &enum_.name, &enumerator.name);
+                return;
+            }
+
+            // Global enum enumerator (e.g. "MIDI_MESSAGE_NOTE_ON").
+            if let Some((enum_, enumerator)) = self.view.find_global_enum_constant(godot_const_ref)
+            {
+                let module = special_cases::get_global_enum_module_path(&enum_.godot_name);
+                write_enum_const_link(out, module, &enum_.name, &enumerator.name);
+                return;
+            }
+        }
+
+        // Fallback: render as a code span when the constant cannot be resolved.
+        write_code_span(out, godot_const_ref);
+    }
+
+    /// Look up a class-scoped enum enumerator by the Godot class and enumerator names.
+    ///
+    /// Finds the class in O(1) via [`ApiView`], then searches within that class's enums. The
+    /// search within a single class is bounded in practice (classes typically have few enums).
+    fn find_class_enum_constant(
+        &self,
+        class_godot_name: &str,
+        const_godot_name: &str,
+    ) -> Option<(&'d Class, &'d Enum, &'d Enumerator)> {
+        // Names like `@GlobalScope` are not valid Rust identifiers and are not engine classes.
+        if class_godot_name.starts_with('@') {
+            return None;
+        }
+        let class = self
+            .view
+            .find_engine_class(&TyName::from_godot(class_godot_name))?;
+        let (enum_, enumerator) = find_enumerator_in_class(class, const_godot_name)?;
+        Some((class, enum_, enumerator))
+    }
+
+    /// Walk from `starting_class` up the inheritance chain, searching each class's enums for an
+    /// enumerator matching `const_godot_name`.
+    ///
+    /// Returns the first match as `(declaring_class, enum, enumerator)`, or `None`.
+    fn find_class_enum_constant_in_hierarchy(
+        &self,
+        starting_class: &'d Class,
+        const_godot_name: &str,
+    ) -> Option<(&'d Class, &'d Enum, &'d Enumerator)> {
+        let mut current = starting_class;
+        loop {
+            if let Some((enum_, enumerator)) = find_enumerator_in_class(current, const_godot_name)
+            {
+                return Some((current, enum_, enumerator));
+            }
+            let base_name = current.base_class.as_ref()?;
+            current = self.view.find_engine_class(base_name)?;
+        }
+    }
+
     fn remaining(&self) -> &'d str {
         &self.doc[self.pos..]
     }
@@ -485,20 +599,38 @@ impl<'d> DocImporter<'d> {
 
 /// Emit `` `text` ``.
 fn write_code_span(out: &mut String, text: &str) {
-    out.push('`');
-    out.push_str(text);
-    out.push('`');
+    write_str!(out, "`{text}`");
+}
+
+/// Search a single class's enums for an enumerator with the given Godot name.
+fn find_enumerator_in_class<'a>(
+    class: &'a Class,
+    const_godot_name: &str,
+) -> Option<(&'a Enum, &'a Enumerator)> {
+    class.enums.iter().find_map(|e| {
+        e.enumerators
+            .iter()
+            .find(|en| en.godot_name == const_godot_name)
+            .map(|en| (e, en))
+    })
 }
 
 /// Emit a Rustdoc reference link `` [`label`][path] ``.
 fn write_code_link(out: &mut String, label: &str, path: &str) {
-    out.push('[');
-    out.push('`');
-    out.push_str(label);
-    out.push('`');
-    out.push_str("][");
-    out.push_str(path);
-    out.push(']');
+    write_str!(out, "[`{label}`][{path}]");
+}
+
+/// Emit `` [`Enum::Variant`][`module::Enum::Variant`] ``, the form used for class- and global-enum links.
+fn write_enum_const_link(
+    out: &mut String,
+    module_path: &str,
+    enum_name: &dyn std::fmt::Display,
+    variant: &dyn std::fmt::Display,
+) {
+    write_str!(
+        out,
+        "[`{enum_name}::{variant}`][`{module_path}::{enum_name}::{variant}`]"
+    );
 }
 
 /// Bracketed name acceptable as a parameter/identifier (ASCII alphanumeric + underscore).
@@ -531,7 +663,7 @@ fn starts_with_known_tag(str: &str) -> bool {
         || str.starts_with("[codeblock lang=")
 }
 
-/// Roles we recognize but cannot resolve to a Rust target — emit them as escaped literal `\[role X]`
+/// Roles we recognize but cannot resolve to a Rust target -- emit them as escaped literal `\[role X]`
 /// so Markdown does not interpret them as links. Accepts both `[role arg]` and bare `[role]`.
 fn is_escaped_role(str: &str) -> bool {
     let role = str.split_once(' ').map(|(r, _)| r).unwrap_or(str);
@@ -622,7 +754,7 @@ fn matches_hardcoded_type(godot_class: &str) -> Option<&'static str> {
 enum Hardcoded {
     /// Matched a special-cased mapping; use this Rust path.
     Mapped(CowStr),
-    /// Matched, but link should be dropped (no Rust target — e.g. arbitrary `@GDScript` symbols).
+    /// Matched, but link should be dropped (no Rust target -- e.g. arbitrary `@GDScript` symbols).
     Suppressed,
     /// No special case; fall through to the regular API-view lookup.
     NotMatched,
@@ -824,7 +956,8 @@ mod tests {
         assert_eq!(
             actual,
             "Compare `LEFT` and `RIGHT` variants.\n\n\
-            Use [`is_match`][`crate::classes::InputEvent::is_match`] with `KEY_LOCATION_UNSPECIFIED` or \\[enum KeyLocation]."
+            Use [`is_match`][`crate::classes::InputEvent::is_match`] with \
+            [`KeyLocation::UNSPECIFIED`][`crate::global::KeyLocation::UNSPECIFIED`] or \\[enum KeyLocation]."
         );
     }
 
@@ -854,14 +987,110 @@ mod tests {
         );
     }
 
-    // `[constant X]` is rendered as code, since we have no Rust target for arbitrary constants.
+    // `[constant X]` falls back to a code span when the name doesn't resolve to any known constant.
+    // Here, `CONNECT_DEFERRED` is a class-scoped constant that requires surrounding-class context,
+    // which is absent, so it cannot be resolved.
     #[test]
     fn constant__code_fallback() {
+        let description = "See [constant CONNECT_DEFERRED].";
+
+        let actual = import_doc_for_test(description, None);
+
+        assert_eq!(actual, "See `CONNECT_DEFERRED`.");
+    }
+
+    // `[constant NOTIFICATION_X]` without a surrounding class links to the declaring class's enum.
+    #[test]
+    fn constant__notification_link_no_class() {
         let description = "See [constant NOTIFICATION_ENTER_TREE].";
 
         let actual = import_doc_for_test(description, None);
 
-        assert_eq!(actual, "See `NOTIFICATION_ENTER_TREE`.");
+        assert_eq!(
+            actual,
+            "See [`NodeNotification::ENTER_TREE`][`crate::classes::notify::NodeNotification::ENTER_TREE`]."
+        );
+    }
+
+    // `[constant NOTIFICATION_X]` with a surrounding class links to that class's notification enum.
+    #[test]
+    fn constant__notification_link_with_class() {
+        let description = "See [constant NOTIFICATION_READY].";
+
+        let actual = import_doc_for_test(description, Some("Node"));
+
+        assert_eq!(
+            actual,
+            "See [`NodeNotification::READY`][`crate::classes::notify::NodeNotification::READY`]."
+        );
+    }
+
+    // An inherited notification constant uses the surrounding class's (not declaring class's) enum.
+    // `NOTIFICATION_POSTINITIALIZE` is declared by `Object`, but in `Node` docs it links to `NodeNotification`.
+    #[test]
+    fn constant__notification_link_inherited() {
+        let description = "See [constant NOTIFICATION_POSTINITIALIZE].";
+
+        let actual = import_doc_for_test(description, Some("Node"));
+
+        assert_eq!(
+            actual,
+            "See [`NodeNotification::POSTINITIALIZE`][`crate::classes::notify::NodeNotification::POSTINITIALIZE`]."
+        );
+    }
+
+    // A class enum constant referenced without a dot is resolved via the surrounding class hierarchy.
+    // `CONNECT_DEFERRED` is in `Object::ConnectFlags`; accessed from a `Node`-surrounding context it
+    // walks up to `Object` and links to the sidecar module.
+    #[test]
+    fn constant__class_enum_via_hierarchy() {
+        let description = "See [constant CONNECT_DEFERRED].";
+
+        let actual = import_doc_for_test(description, Some("Node"));
+
+        assert_eq!(
+            actual,
+            "See [`ConnectFlags::DEFERRED`][`crate::classes::object::ConnectFlags::DEFERRED`]."
+        );
+    }
+
+    // `[constant ClassName.X]` with a dot resolves via the named class's sidecar enum.
+    #[test]
+    fn constant__dot_class_enum_link() {
+        let description = "See [constant Object.CONNECT_DEFERRED].";
+
+        let actual = import_doc_for_test(description, None);
+
+        assert_eq!(
+            actual,
+            "See [`ConnectFlags::DEFERRED`][`crate::classes::object::ConnectFlags::DEFERRED`]."
+        );
+    }
+
+    // `[constant ClassName.NOTIFICATION_X]` with a dot resolves to that class's notification enum.
+    #[test]
+    fn constant__dot_notification_link() {
+        let description = "See [constant Node.NOTIFICATION_READY].";
+
+        let actual = import_doc_for_test(description, None);
+
+        assert_eq!(
+            actual,
+            "See [`NodeNotification::READY`][`crate::classes::notify::NodeNotification::READY`]."
+        );
+    }
+
+    // `[constant X]` for a global enum enumerator emits a Rustdoc link to the Rust variant.
+    #[test]
+    fn constant__global_enum_link() {
+        let description = "See [constant MIDI_MESSAGE_NOTE_ON].";
+
+        let actual = import_doc_for_test(description, None);
+
+        assert_eq!(
+            actual,
+            "See [`MidiMessage::NOTE_ON`][`crate::global::MidiMessage::NOTE_ON`]."
+        );
     }
 
     #[test]
@@ -988,7 +1217,7 @@ mod tests {
         assert_eq!(
             actual,
             "MIDI note release.\n\n\
-            **Note:** Some devices send `MIDI_MESSAGE_NOTE_ON` with \
+            **Note:** Some devices send [`MidiMessage::NOTE_ON`][`crate::global::MidiMessage::NOTE_ON`] with \
             \\[member InputEventMIDI.velocity] = `0`."
         );
     }

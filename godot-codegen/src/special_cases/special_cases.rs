@@ -1293,11 +1293,20 @@ pub fn is_enum_private(class_name: Option<&TyName>, enum_name: &str) -> bool {
     }
 }
 
+/// Returns the Rust module path of a global Godot enum as a string (instead of `crate::global`).
+pub fn get_global_enum_module_path(enum_name: &str) -> &'static str {
+    match enum_name {
+        "PropertyHint" | "PropertyUsageFlags" | "MethodFlags" => "crate::registry::info",
+        "Corner" | "EulerOrder" | "Side" => "crate::builtin",
+        _ => "crate::global",
+    }
+}
+
 /// Returns the Rust module path of a global Godot enum (instead of `crate::global::EnumName`).
 pub fn get_global_enum_rust_path(enum_name: &str) -> TokenStream {
-    match enum_name {
-        "PropertyHint" | "PropertyUsageFlags" | "MethodFlags" => quote! { crate::registry::info },
-        "Corner" | "EulerOrder" | "Side" => quote! { crate::builtin },
+    match get_global_enum_module_path(enum_name) {
+        "crate::registry::info" => quote! { crate::registry::info },
+        "crate::builtin" => quote! { crate::builtin },
         _ => quote! { crate::global },
     }
 }
