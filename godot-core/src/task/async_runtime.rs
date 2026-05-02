@@ -68,7 +68,7 @@ use crate::private::handle_panic;
 /// 
 /// #[godot_api]
 /// impl Game {
-///     // A simple async function that implements sleep using Godot timers
+///     // Async function that implements sleep using Godot timers.
 ///     async fn sleep(&self, duration: f64) {
 ///         let timer = self.base().get_tree().create_timer(duration);
 ///         // Use a future to wait for the timout signal
