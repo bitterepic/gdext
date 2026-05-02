@@ -14,13 +14,14 @@
 // Moving said types to `godot-bindings` would increase the cognitive overhead (since domain mapping is responsibility of `godot-codegen`, while godot-bindings is responsible for providing required resources & emitting the version).
 // In the future we might experiment with splitting said types into separate crates.
 
-use std::fs;
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::Once;
+use std::{fs, panic};
 
 use nanoserde::DeJson;
 
-use crate::{GodotVersion, env_var_or_deprecated};
+use crate::{GodotVersion, LATEST_API_VERSION, StopWatch, env_var_or_deprecated};
 
 /// A minimal version of deserialized JsonExtensionApi that includes only the header.
 #[derive(DeJson)]
@@ -52,6 +53,19 @@ impl JsonHeader {
     }
 }
 
+pub fn load_gdextension_interface_json(watch: &mut StopWatch) -> Cow<'static, str> {
+    println!("cargo:rerun-if-env-changed=GDRUST_GODOT_INTERFACE_JSON");
+    watch.record("load_interface_json");
+
+    if let Ok(path) = std::env::var("GDRUST_GODOT_INTERFACE_JSON")
+        && let Ok(contents) = fs::read_to_string(&path)
+    {
+        Cow::Owned(contents)
+    } else {
+        gdextension_api::load_gdextension_interface_json()
+    }
+}
+
 pub fn load_custom_extension_api_json() -> String {
     static WARN_ONCE: Once = Once::new();
     let env_var = env_var_or_deprecated(
@@ -77,13 +91,31 @@ pub fn load_custom_extension_api_json() -> String {
     })
 }
 
+/// Returns the Godot version specified in `extension_api.json`, or the version of the used header if newer.
 pub(crate) fn read_godot_version() -> GodotVersion {
     let extension_api: JsonExtensionApi =
         DeJson::deserialize_json(&load_custom_extension_api_json())
             .expect("failed to deserialize JSON");
 
-    extension_api
+    let json_header_version = extension_api
         .header
         .into_godot_version()
-        .validate_or_panic()
+        .validate_or_panic();
+
+    if json_header_version.is_newer_than_latest()
+        && std::env::var("GDRUST_GODOT_INTERFACE_JSON").is_err()
+    {
+        let (major, minor, patch) = LATEST_API_VERSION;
+
+        // Note: this warning will be shown only with the extra verbose setting (`-vv`), on compilation error, or when compiling
+        // this very workspace (i.e. when it is a local dependency).
+        println!(
+            "cargo::warning=Using Godot version API {h_version} specified in `GDRUST_GODOT_API_JSON` with \
+            prebuilt Godot headers {major}.{minor}.{patch}.\
+            Consider providing custom `gdextension_interface.json` with `GDRUST_GODOT_INTERFACE_JSON` env variable instead.",
+            h_version = json_header_version.full_string,
+        );
+    }
+
+    json_header_version
 }

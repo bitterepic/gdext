@@ -117,8 +117,7 @@ mod depend_on_custom_json {
     }
 
     pub fn load_gdextension_interface_json(watch: &mut StopWatch) -> Cow<'static, str> {
-        watch.record("load_interface_json");
-        gdextension_api::load_gdextension_interface_json()
+        godot_json::load_gdextension_interface_json(watch)
     }
 
     pub(crate) fn get_godot_version() -> GodotVersion {
