@@ -646,8 +646,11 @@ pub unsafe fn classdb_construct_object(
     #[cfg(before_api = "4.4")]
     let f = interface_fn!(classdb_construct_object);
 
-    #[cfg(since_api = "4.4")]
+    #[cfg(all(since_api = "4.4", before_api = "4.7"))]
     let f = interface_fn!(classdb_construct_object2);
+
+    #[cfg(since_api = "4.7")]
+    let f = interface_fn!(classdb_construct_object3);
 
     // SAFETY: function pointer is valid since binding is initialized; class_name validity is upheld by caller.
     unsafe { f(class_name) }

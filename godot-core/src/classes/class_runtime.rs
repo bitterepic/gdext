@@ -240,7 +240,7 @@ where
 {
     let mut obj = unsafe {
         let object_ptr = sys::classdb_construct_object(T::class_id().string_sys());
-        Gd::<T>::from_obj_sys(object_ptr)
+        Gd::<T>::from_constructed_obj_sys(object_ptr)
     };
     #[cfg(since_api = "4.4")]
     obj.upcast_object_mut()

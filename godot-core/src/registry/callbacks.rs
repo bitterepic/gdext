@@ -105,8 +105,15 @@ where
         #[cfg(since_api = "4.4")]
         if notify_postinitialize {
             // Should notify it with a weak pointer, during `NOTIFICATION_POSTINITIALIZE`, ref-counted object is not yet fully-initialized.
+            #[cfg(before_api = "4.7")]
             let mut obj = unsafe { Gd::<Object>::from_obj_sys_weak(base_ptr) };
+
+            // Since 4.7 base comes in fully initialized.
+            #[cfg(since_api = "4.7")]
+            let mut obj = unsafe { Gd::<Object>::from_obj_sys(base_ptr) };
+
             obj.notify(crate::classes::notify::ObjectNotification::POSTINITIALIZE);
+            #[cfg(before_api = "4.7")]
             obj.drop_weak();
         }
     };
@@ -153,7 +160,13 @@ where
     // Print shouldn't be necessary as panic itself is printed. If this changes, re-enable in error case:
     // godot_error!("failed to create instance of {class_name}; Rust init() panicked");
 
+    #[cfg(before_api = "4.7")]
     let mut base_copy = unsafe { Base::from_base(&base) };
+    #[cfg(all(since_api = "4.7", safeguards_balanced))]
+    sys::balanced_assert!(
+        Base::is_valid(&base),
+        "Unable to construct instance – Base was freed during initialization"
+    );
 
     let instance = InstanceStorage::<T>::construct(user_instance, base);
     let instance_rust_ptr = instance.into_raw();
@@ -173,6 +186,7 @@ where
     postinit(base_ptr);
 
     // Mark initialization as complete, now that user constructor has finished.
+    #[cfg(before_api = "4.7")]
     base_copy.mark_initialized();
 
     // No std::mem::forget(base_copy) here, since Base may stores other fields that need deallocation.
