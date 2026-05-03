@@ -145,7 +145,7 @@ struct DocImporter<'d> {
     doc: &'d str,
     pos: usize,
     surrounding_class: Option<&'d Class>,
-    ctx: &'d Context<'d>,
+    ctx: &'d Context,
     view: &'d ApiView<'d>,
     /// Cache of Godot class name -> Rust crate path (e.g. `"Node"` -> `"crate::classes::Node"`).
     /// Lives for the duration of one doc-string import; avoids repeated `to_pascal_case` + `format!` per link.
@@ -156,7 +156,7 @@ impl<'d> DocImporter<'d> {
     fn new(
         doc: &'d str,
         surrounding_class: Option<&'d Class>,
-        ctx: &'d Context<'d>,
+        ctx: &'d Context,
         view: &'d ApiView<'d>,
     ) -> Self {
         Self {
@@ -526,9 +526,13 @@ impl<'d> DocImporter<'d> {
     /// Emit Markdown for `[method Class.fn]` or `[method fn]` (latter resolved against surrounding class).
     /// Falls back to escaping the original `[method ...]` literal if the target cannot be resolved.
     fn write_method_link(&mut self, out: &mut String, whole_match: &str, method_path: &str) {
-        if let Some(method_path) =
-            convert_to_method_path(method_path, self.surrounding_class, self.ctx, self.view, &mut self.path_cache)
-        {
+        if let Some(method_path) = convert_to_method_path(
+            method_path,
+            self.surrounding_class,
+            self.ctx,
+            self.view,
+            &mut self.path_cache,
+        ) {
             let (_, method_name) = method_path
                 .rsplit_once("::")
                 .expect("rsplit_once should return a method name");
@@ -626,10 +630,11 @@ impl<'d> DocImporter<'d> {
         if class_godot_name.starts_with('@') {
             return None;
         }
-        let class = self
+        let class_ty = TyName::from_godot(class_godot_name);
+        let class = self.view.find_engine_class(&class_ty)?;
+        let (enum_, enumerator) = self
             .view
-            .find_engine_class(&TyName::from_godot(class_godot_name))?;
-        let (enum_, enumerator) = find_enumerator_in_class(class, const_godot_name)?;
+            .find_class_enum_constant(&class_ty, const_godot_name)?;
         Some((class, enum_, enumerator))
     }
 
@@ -644,7 +649,10 @@ impl<'d> DocImporter<'d> {
     ) -> Option<(&'d Class, &'d Enum, &'d Enumerator)> {
         let mut current = starting_class;
         loop {
-            if let Some((enum_, enumerator)) = find_enumerator_in_class(current, const_godot_name) {
+            if let Some((enum_, enumerator)) = self
+                .view
+                .find_class_enum_constant(current.name(), const_godot_name)
+            {
                 return Some((current, enum_, enumerator));
             }
             let base_name = current.base_class.as_ref()?;
@@ -669,19 +677,6 @@ impl<'d> DocImporter<'d> {
 /// Emit `` `text` ``.
 fn write_code_span(out: &mut String, text: &str) {
     write_str!(out, "`{text}`");
-}
-
-/// Search a single class's enums for an enumerator with the given Godot name.
-fn find_enumerator_in_class<'a>(
-    class: &'a Class,
-    const_godot_name: &str,
-) -> Option<(&'a Enum, &'a Enumerator)> {
-    class.enums.iter().find_map(|e| {
-        e.enumerators
-            .iter()
-            .find(|en| en.godot_name == const_godot_name)
-            .map(|en| (e, en))
-    })
 }
 
 /// Emit a Rustdoc reference link `` [`label`][path] ``.
@@ -911,15 +906,14 @@ mod tests {
     use std::cell::OnceCell;
 
     use super::*;
-    use crate::models::api_json::{JsonExtensionApi, load_extension_api};
+    use crate::models::api_json::load_extension_api;
     use crate::models::domain::ExtensionApi;
 
-    // `JsonExtensionApi` and `ExtensionApi` are cached per thread; `Context`/`ApiView` are
-    // cheap to rebuild and need lifetimes tied to those owners, so we rebuild them per test.
+    // `Context` and `ExtensionApi` are cached per thread; `ApiView` is cheap to rebuild per test.
     // Using `thread_local` (rather than a global `OnceLock`) avoids needing a `Mutex`, since
     // `ExtensionApi` contains `proc_macro2::TokenStream` and is therefore `!Sync`.
     struct DocTestCache {
-        json: JsonExtensionApi,
+        ctx: Context,
         api: ExtensionApi,
     }
 
@@ -933,16 +927,15 @@ mod tests {
                 let mut watch = godot_bindings::StopWatch::start();
                 let json = load_extension_api(&mut watch);
                 let mut ctx = Context::build_from_api(&json);
-                let api = ExtensionApi::from_json(&json, &mut ctx);
-                DocTestCache { json, api }
+                let api = ExtensionApi::from_json(json, &mut ctx);
+                DocTestCache { ctx, api }
             });
 
-            let ctx = Context::build_from_api(&cache.json);
             let view = ApiView::new(&cache.api);
             let surrounding_class = surrounding_class_name
                 .and_then(|name| view.find_engine_class(&TyName::from_godot(name)));
 
-            import_docs(description, surrounding_class, &ctx, &view)
+            import_docs(description, surrounding_class, &cache.ctx, &view)
         })
     }
 
