@@ -41,7 +41,7 @@ fn prune_stale_connections(registry: &mut Vec<CachedSignalConnection>) {
     registry.retain_mut(|connection| {
         if let Some(obj) = connection
             .receiver_object
-            .take_if(|obj| obj.is_instance_valid())
+            .take_if(|obj| !obj.is_instance_valid())
         {
             obj.drop_weak();
             false
