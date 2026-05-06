@@ -17,7 +17,6 @@ use crate::meta::error::{ConvertError, FromVariantError};
 use crate::meta::shape::GodotShape;
 use crate::meta::{FromGodot, GodotConvert, GodotFfiVariant, GodotType, RefArg, ToGodot};
 use crate::obj::bounds::{Declarer, DynMemory as _};
-use crate::obj::casts::CastSuccess;
 use crate::obj::rtti::ObjectRtti;
 use crate::obj::{Bounds, Gd, GdDerefTarget, GdMut, GdRef, GodotClass, InstanceId, bounds};
 use crate::storage::{InstanceCache, InstanceStorage, Storage};
@@ -120,90 +119,60 @@ impl<T: GodotClass> RawGd<T> {
             .is_some_and(|rtti| rtti.instance_id().lookup_validity())
     }
 
-    // See use-site for explanation.
-    fn is_cast_valid<U>(&self) -> bool
-    where
-        U: GodotClass,
-    {
-        self.is_null() // Null can be cast to anything.
-            || {
-                // is_class() parameter changed from GString to StringName in Godot 4.7.
-                #[cfg(since_api = "4.7")]
-                let class_name = U::class_id().to_string_name();
-                #[cfg(before_api = "4.7")]
-                let class_name = U::class_id().to_gstring();
+    /// Checks whether `self` inherits from (or is) class `U`.
+    fn is_instance_of<U: GodotClass>(&self) -> bool {
+        // is_class() parameter changed from GString to StringName in Godot 4.7.
+        #[cfg(since_api = "4.7")]
+        let class_name = U::class_id().to_string_name();
+        #[cfg(before_api = "4.7")]
+        let class_name = U::class_id().to_gstring();
 
-                self.as_object_ref().is_class(&class_name)
-            }
+        self.as_object_ref().is_class(&class_name)
     }
 
-    /// Returns `Ok(cast_obj)` on success, `Err(self)` on error
+    /// Returns `Ok(cast_obj)` on success, `Err(self)` on error.
     pub(super) fn owned_cast<U>(self) -> Result<RawGd<U>, Self>
     where
         U: GodotClass,
     {
-        // Workaround for bug in Godot that makes casts always succeed (https://github.com/godot-rust/gdext/issues/158).
-        // TODO once fixed in Godot, remove this.
-        if !self.is_cast_valid::<U>() {
-            return Err(self);
-        }
-
-        // The unsafe { std::mem::transmute<&T, &Base>(self.inner()) } relies on the C++ static_cast class casts
-        // to return the same pointer, however in theory those may yield a different pointer (VTable offset,
-        // virtual inheritance etc.). It *seems* to work so far, but this is no indication it's not UB.
-        //
-        // The Deref/DerefMut impls for T implement an "implicit upcast" on the object (not Gd) level and
-        // rely on this (e.g. &Node3D -> &Node).
-
-        match self.ffi_cast::<U>() {
-            Ok(success) => Ok(success.into_dest(self)),
-            Err(_) => Err(self),
-        }
-    }
-
-    /// Low-level cast that allows selective use of either input or output type.
-    ///
-    /// On success, you'll get a `CastSuccess<T, U>` instance, which holds a weak `RawGd<U>`. You can only extract that one by trading
-    /// a strong `RawGd<T>` for it, to maintain the balance.
-    ///
-    /// This function is unreliable when invoked _during_ destruction (e.g. C++ `~RefCounted()` destructor). This can occur when debug-logging
-    /// instances during cleanups. `Object::object_cast_to()` is a virtual function, but virtual dispatch during destructor doesn't work in C++.
-    pub(super) fn ffi_cast<U>(&self) -> Result<CastSuccess<T, U>, ()>
-    where
-        U: GodotClass,
-    {
-        //eprintln!("ffi_cast: {} (dyn {}) -> {}", T::class_id(), self.as_non_null().dynamic_class_string(), U::class_name());
-
-        // `self` may be null when we convert a null-variant into a `Option<Gd<T>>`, since we use `ffi_cast`
-        // in the `ffi_from_variant` conversion function to ensure type-correctness. So the chain would be as follows:
-        // - Variant::nil()
-        // - null RawGd<Object>
-        // - null RawGd<T>
-        // - Option::<Gd<T>>::None
         if self.is_null() {
-            // Null can be cast to anything.
-            // Forgetting a null doesn't do anything, since dropping a null also does nothing.
-            return Ok(CastSuccess::null());
+            // Null can be cast to anything; ref-count is irrelevant.
+            return Ok(RawGd::null());
         }
 
         // Before Godot API calls, make sure the object is alive (and in Debug mode, of the correct type).
         // Current design decision: EVERY cast fails on incorrect type, even if target type is correct. This avoids the risk of violated
         // invariants that leak to the Godot implementation. Also, we do not provide a way to recover from bad types -- this is always
         // a bug that must be solved by the user.
-        self.check_rtti("ffi_cast");
+        self.check_rtti("cast");
 
-        let cast_object_ptr = unsafe {
-            let class_tag = interface_fn!(classdb_get_class_tag)(U::class_id().string_sys());
-            interface_fn!(object_cast_to)(self.obj_sys(), class_tag)
-        };
-
-        if cast_object_ptr.is_null() {
-            return Err(());
+        if self.is_instance_of::<U>() {
+            // SAFETY: is_class() confirmed U is a valid type.
+            Ok(unsafe { self.into_reinterpreted() })
+        } else {
+            Err(self)
         }
+    }
 
-        // Create weak object, as ownership will be moved and reference-counter stays the same.
-        let weak = unsafe { RawGd::from_obj_sys_weak(cast_object_ptr) };
-        Ok(CastSuccess::from_weak(weak))
+    /// Consumes `self` and reinterprets it as `RawGd<U>`, transferring ownership without changing the refcount.
+    ///
+    /// # Safety
+    /// Caller must guarantee that the underlying object is a valid instance of `U`.
+    unsafe fn into_reinterpreted<U: GodotClass>(self) -> RawGd<U> {
+        let me = std::mem::ManuallyDrop::new(self);
+
+        // Reuse the cached instance ID (no FFI roundtrip), but re-tag RTTI with U for downstream type checks.
+        let cached_rtti = me
+            .cached_rtti
+            .as_ref()
+            .map(|rtti| ObjectRtti::of::<U>(rtti.instance_id()));
+
+        // SAFETY: ManuallyDrop suppresses Drop on source; returned RawGd<U> takes sole ownership of the object pointer.
+        RawGd {
+            obj: me.obj.cast::<U>(),
+            cached_rtti,
+            cached_storage_ptr: InstanceCache::null(),
+        }
     }
 
     /// Executes a function, assuming that `self` inherits `RefCounted`.
@@ -250,11 +219,30 @@ impl<T: GodotClass> RawGd<T> {
         &self,
         apply: impl Fn(&mut classes::RefCounted) -> R,
     ) -> Result<R, ()> {
-        let mut ref_counted = self.ffi_cast::<classes::RefCounted>()?;
-        let return_val = apply(ref_counted.as_dest_mut().as_target_mut());
+        if self.is_null() {
+            return Err(());
+        }
 
-        // CastSuccess is forgotten when dropped, so no ownership transfer.
-        Ok(return_val)
+        // Liveness check before calling Godot API; also validates type in Debug mode.
+        self.check_rtti("try_with_ref_counted");
+
+        if !self.is_instance_of::<classes::RefCounted>() {
+            return Err(());
+        }
+
+        // Build a temporary `RawGd<RefCounted>` sharing the pointer; suppress its Drop so the refcount stays balanced.
+        // SAFETY: is_instance_of confirmed RefCounted is a valid base of T.
+        let cached_rtti = self
+            .cached_rtti
+            .as_ref()
+            .map(|rtti| ObjectRtti::of::<classes::RefCounted>(rtti.instance_id()));
+        let raw = RawGd::<classes::RefCounted> {
+            obj: self.obj.cast(),
+            cached_rtti,
+            cached_storage_ptr: InstanceCache::null(),
+        };
+        let mut borrow = std::mem::ManuallyDrop::new(raw);
+        Ok(apply(borrow.as_target_mut()))
     }
 
     /// Enables outer `Gd` APIs or bypasses additional null checks, in cases where `RawGd` is guaranteed non-null.
@@ -295,31 +283,29 @@ impl<T: GodotClass> RawGd<T> {
         // DeclEngine needed for sound transmute; in case we add Rust-defined base classes.
         Base: GodotClass + Bounds<Declarer = bounds::DeclEngine>,
     {
-        unsafe {
-            self.ensure_valid_upcast::<Base>();
+        self.check_rtti("upcast_ref");
 
-            // SAFETY:
-            // Every engine object is a struct like:
-            //
-            // #[repr(C)]
-            // struct Node3D {
-            //     object_ptr: sys::GDExtensionObjectPtr,
-            //     rtti: Option<ObjectRtti>,
-            // }
-            //
-            // and `RawGd` looks like:
-            //
-            // #[repr(C)]
-            // pub struct RawGd<T: GodotClass> {
-            //     obj: *mut T,
-            //     cached_rtti: Option<ObjectRtti>,
-            //     cached_storage_ptr: InstanceCache, // ZST for engine classes.
-            // }
-            //
-            // The pointers have the same meaning despite different types, and so the whole struct is layout-compatible.
-            // In addition, Gd<T> as opposed to RawGd<T> will have the Option always set to Some.
-            std::mem::transmute::<&Self, &Base>(self)
-        }
+        // SAFETY:
+        // Every engine object is a struct like:
+        //
+        // #[repr(C)]
+        // struct Node3D {
+        //     object_ptr: sys::GDExtensionObjectPtr,
+        //     rtti: Option<ObjectRtti>,
+        // }
+        //
+        // and `RawGd` looks like:
+        //
+        // #[repr(C)]
+        // pub struct RawGd<T: GodotClass> {
+        //     obj: *mut T,
+        //     cached_rtti: Option<ObjectRtti>,
+        //     cached_storage_ptr: InstanceCache, // ZST for engine classes.
+        // }
+        //
+        // The pointers have the same meaning despite different types, and so the whole struct is layout-compatible.
+        // In addition, Gd<T> as opposed to RawGd<T> will have the Option always set to Some.
+        unsafe { std::mem::transmute::<&Self, &Base>(self) }
     }
 
     /// # Panics
@@ -337,7 +323,7 @@ impl<T: GodotClass> RawGd<T> {
         Base: GodotClass + Bounds<Declarer = bounds::DeclEngine>,
     {
         unsafe {
-            self.ensure_valid_upcast::<Base>();
+            self.check_rtti("upcast_ref");
 
             // SAFETY: see also `as_upcast_ref()`.
             //
@@ -371,38 +357,6 @@ impl<T: GodotClass> RawGd<T> {
     {
         // SAFETY: See as_target().
         unsafe { self.as_upcast_mut::<GdDerefTarget<T>>() }
-    }
-
-    // Clippy believes the type parameters are not used, however they are used in the `.ffi_cast::<Base>` call.
-    #[allow(clippy::extra_unused_type_parameters)]
-    fn ensure_valid_upcast<Base>(&self)
-    where
-        Base: GodotClass,
-    {
-        // Validation object identity.
-        self.check_rtti("upcast_ref");
-        sys::balanced_assert!(!self.is_null(), "cannot upcast null object refs");
-
-        // In Debug builds, go the long path via Godot FFI to verify the results are the same.
-        #[cfg(safeguards_strict)]
-        {
-            // SAFETY: we forget the object below and do not leave the function before.
-            let ffi_dest = self.ffi_cast::<Base>().expect("failed FFI upcast");
-
-            // The ID check is not that expressive; we should do a complete comparison of the ObjectRtti, but currently the dynamic types can
-            // be different (see comment in ObjectRtti struct). This at least checks that the transmuted object is not complete garbage.
-            // We get direct_id from Self and not Base because the latter has no API with current bounds; but this equivalence is tested in Deref.
-            let direct_id = self.instance_id_unchecked().expect("direct_id null");
-            let ffi_id = ffi_dest
-                .as_dest_ref()
-                .instance_id_unchecked()
-                .expect("ffi_id null");
-
-            assert_eq!(
-                direct_id, ffi_id,
-                "upcast_ref: direct and FFI IDs differ. This is a bug, please report to godot-rust maintainers."
-            );
-        }
     }
 
     /// Validates object for use in `RawGd`/`Gd` methods (not FFI boundary calls).

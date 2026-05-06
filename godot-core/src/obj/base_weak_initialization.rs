@@ -7,6 +7,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry as HashEntry;
 
 use crate::builtin::Callable;
 use crate::obj::base_init::InitState;
@@ -45,16 +46,15 @@ impl<T: GodotClass> Base<T> {
         let instance_id = self.obj.instance_id();
         PENDING_STRONG_REFS.with(|refs| {
             let mut pending_refs = refs.borrow_mut();
-            if let std::collections::hash_map::Entry::Vacant(e) = pending_refs.entry(instance_id) {
+            if let HashEntry::Vacant(e) = pending_refs.entry(instance_id) {
                 let strong_ref: Gd<T> = unsafe { Gd::from_obj_sys(self.obj.obj_sys()) };
 
-                // We know that T: Inherits<RefCounted> due to check above, but don't it as a static bound for Gd::upcast().
-                // Thus fall back to low-level FFI cast on RawGd.
-                let strong_ref_raw = strong_ref.raw;
-                let raw = strong_ref_raw
-                    .ffi_cast::<classes::RefCounted>()
-                    .expect("Base must be RefCounted")
-                    .into_dest(strong_ref_raw);
+                // T: Inherits<RefCounted> is confirmed by IS_REF_COUNTED check above.
+                // Transfer ownership via owned_cast (no refcount change): original Gd<T> is consumed.
+                let raw = strong_ref
+                    .raw
+                    .owned_cast::<classes::RefCounted>()
+                    .expect("IS_REF_COUNTED guarantees T inherits RefCounted");
 
                 e.insert(Gd { raw });
             }
