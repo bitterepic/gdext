@@ -219,17 +219,14 @@ impl DynMemory for MemRefCounted {
         if obj.is_null() {
             return;
         }
-        obj.with_ref_counted(|refc| {
-            let success = refc.init_ref();
-            assert!(success, "init_ref() failed");
-        });
 
-        /*
-        // SAFETY: DynMemory=MemRefCounted statically guarantees that the object inherits from RefCounted.
-        let refc = unsafe { obj.as_ref_counted_unchecked() };
-
-        let success = refc.init_ref();
-        assert!(success, "init_ref() failed");*/
+        // SAFETY: DynMemory=MemRefCounted statically guarantees T inherits RefCounted.
+        unsafe {
+            obj.with_ref_counted_unchecked(|refc| {
+                let success = refc.init_ref();
+                assert!(success, "init_ref() failed");
+            })
+        };
     }
 
     fn maybe_inc_ref<T: GodotClass>(obj: &mut RawGd<T>) {
@@ -237,10 +234,14 @@ impl DynMemory for MemRefCounted {
         if obj.is_null() {
             return;
         }
-        obj.with_ref_counted(|refc| {
-            let success = refc.reference();
-            assert!(success, "reference() failed");
-        });
+
+        // SAFETY: DynMemory=MemRefCounted statically guarantees T inherits RefCounted.
+        unsafe {
+            obj.with_ref_counted_unchecked(|refc| {
+                let success = refc.reference();
+                assert!(success, "reference() failed");
+            })
+        };
     }
 
     unsafe fn maybe_dec_ref<T: GodotClass>(obj: &mut RawGd<T>) -> bool {
@@ -248,11 +249,15 @@ impl DynMemory for MemRefCounted {
         if obj.is_null() {
             return false;
         }
-        obj.with_ref_counted(|refc| {
-            let is_last = refc.unreference();
-            out!("  +-- was last={is_last}");
-            is_last
-        })
+
+        // SAFETY: DynMemory=MemRefCounted statically guarantees T inherits RefCounted.
+        unsafe {
+            obj.with_ref_counted_unchecked(|refc| {
+                let is_last = refc.unreference();
+                out!("  +-- was last={is_last}");
+                is_last
+            })
+        }
     }
 
     fn is_ref_counted<T: GodotClass>(_obj: &RawGd<T>) -> Option<bool> {
@@ -260,7 +265,9 @@ impl DynMemory for MemRefCounted {
     }
 
     fn get_ref_count<T: GodotClass>(obj: &RawGd<T>) -> Option<usize> {
-        let ref_count = obj.with_ref_counted(|refc| refc.get_reference_count());
+        // SAFETY: DynMemory=MemRefCounted statically guarantees T inherits RefCounted.
+        let ref_count =
+            unsafe { obj.with_ref_counted_unchecked(|refc| refc.get_reference_count()) };
 
         // TODO find a safer cast alternative, e.g. num-traits crate with ToPrimitive (Debug) + AsPrimitive (Release).
         Some(ref_count as usize)

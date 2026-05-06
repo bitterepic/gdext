@@ -159,17 +159,16 @@ impl<T: GodotClass> RawGd<T> {
     /// # Safety
     /// Caller must guarantee that the underlying object is a valid instance of `U`.
     unsafe fn into_reinterpreted<U: GodotClass>(self) -> RawGd<U> {
-        let me = std::mem::ManuallyDrop::new(self);
-
-        // Reuse the cached instance ID (no FFI roundtrip), but re-tag RTTI with U for downstream type checks.
-        let cached_rtti = me
+        let this = std::mem::ManuallyDrop::new(self);
+        let cached_rtti = this
             .cached_rtti
             .as_ref()
             .map(|rtti| ObjectRtti::of::<U>(rtti.instance_id()));
 
-        // SAFETY: ManuallyDrop suppresses Drop on source; returned RawGd<U> takes sole ownership of the object pointer.
+        // SAFETY: caller guarantees object is a valid `U`; `ManuallyDrop` suppresses Drop on the source,
+        // so the returned `RawGd<U>` takes sole ownership without a refcount change.
         RawGd {
-            obj: me.obj.cast::<U>(),
+            obj: this.obj.cast::<U>(),
             cached_rtti,
             cached_storage_ptr: InstanceCache::null(),
         }
@@ -182,14 +181,9 @@ impl<T: GodotClass> RawGd<T> {
     ///
     /// # Panics
     /// If `self` does not inherit `RefCounted` or is null.
-    pub fn with_ref_counted<R>(&self, apply: impl Fn(&mut classes::RefCounted) -> R) -> R {
+    pub fn with_ref_counted<R>(&self, apply: impl FnOnce(&mut classes::RefCounted) -> R) -> R {
         // Note: this previously called Declarer::scoped_mut() - however, no need to go through bind() for changes in base RefCounted.
         // Any accesses to user objects (e.g. destruction if refc=0) would bind anyway.
-        //
-        // Might change implementation as follows -- but last time caused UB; investigate.
-        // pub(crate) unsafe fn as_ref_counted_unchecked(&mut self) -> &mut classes::RefCounted {
-        //     self.as_target_mut()
-        // }
 
         match self.try_with_ref_counted(apply) {
             Ok(result) => result,
@@ -203,8 +197,6 @@ impl<T: GodotClass> RawGd<T> {
                 let gd_ref = unsafe { self.as_non_null() };
                 let class = gd_ref.dynamic_class_string();
 
-                // One way how this may panic is when invoked during destruction of a RefCounted object. The C++ `Object::object_cast_to()`
-                // function is virtual but cannot be dynamically dispatched in a C++ destructor.
                 panic!(
                     "Operation not permitted for object of class {class}:\n\
                     class is either not RefCounted, or currently in construction/destruction phase"
@@ -214,35 +206,54 @@ impl<T: GodotClass> RawGd<T> {
     }
 
     /// Fallible version of [`with_ref_counted()`](Self::with_ref_counted), for situations during init/drop when downcast no longer works.
+    ///
+    /// Returns `Err(())` if `self` is null or does not inherit `RefCounted`.
     #[expect(clippy::result_unit_err)]
     pub fn try_with_ref_counted<R>(
         &self,
-        apply: impl Fn(&mut classes::RefCounted) -> R,
+        apply: impl FnOnce(&mut classes::RefCounted) -> R,
     ) -> Result<R, ()> {
-        if self.is_null() {
+        // `InstanceId` carries a bit indicating ref-countedness — no FFI roundtrip needed.
+        let is_ref_counted = self
+            .cached_rtti
+            .as_ref()
+            .is_some_and(|rtti| rtti.instance_id().is_ref_counted());
+
+        if !is_ref_counted {
             return Err(());
         }
 
-        // Liveness check before calling Godot API; also validates type in Debug mode.
+        // Liveness check before invoking the user function; also validates type in Debug mode.
         self.check_rtti("try_with_ref_counted");
 
-        if !self.is_instance_of::<classes::RefCounted>() {
-            return Err(());
-        }
+        // SAFETY: instance ID confirms RefCounted base.
+        Ok(unsafe { self.with_ref_counted_unchecked(apply) })
+    }
 
-        // Build a temporary `RawGd<RefCounted>` sharing the pointer; suppress its Drop so the refcount stays balanced.
-        // SAFETY: is_instance_of confirmed RefCounted is a valid base of T.
+    /// Executes a function directly on this object, assuming it is `RefCounted`.
+    ///
+    /// Unlike [`try_with_ref_counted`](Self::try_with_ref_counted), this does **not** check the type at runtime.
+    ///
+    /// # Safety
+    /// Caller must guarantee that `T` (statically) inherits from `RefCounted`.
+    pub(crate) unsafe fn with_ref_counted_unchecked<R>(
+        &self,
+        apply: impl FnOnce(&mut classes::RefCounted) -> R,
+    ) -> R {
         let cached_rtti = self
             .cached_rtti
             .as_ref()
             .map(|rtti| ObjectRtti::of::<classes::RefCounted>(rtti.instance_id()));
+
+        // Note: caller guarantees T: Inherits<RefCounted>. `ManuallyDrop` keeps the refcount balanced when `borrow` goes out of scope.
         let raw = RawGd::<classes::RefCounted> {
             obj: self.obj.cast(),
             cached_rtti,
             cached_storage_ptr: InstanceCache::null(),
         };
+
         let mut borrow = std::mem::ManuallyDrop::new(raw);
-        Ok(apply(borrow.as_target_mut()))
+        apply(borrow.as_target_mut())
     }
 
     /// Enables outer `Gd` APIs or bypasses additional null checks, in cases where `RawGd` is guaranteed non-null.
