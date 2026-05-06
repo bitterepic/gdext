@@ -20,10 +20,10 @@ use crate::util::option_as_slice;
 use crate::{JsonExtensionApi, special_cases, util};
 
 #[derive(Default)]
-pub struct Context<'a> {
-    builtin_types: HashSet<&'a str>,
-    native_structures_types: HashSet<&'a str>,
-    singletons: HashSet<&'a str>,
+pub struct Context {
+    builtin_types: HashSet<String>,
+    native_structures_types: HashSet<String>,
+    singletons: HashSet<String>,
     inheritance_tree: InheritanceTree,
     /// Which interface traits are generated (`false` for "Godot-abstract"/final classes).
     classes_final: HashMap<TyName, bool>,
@@ -38,17 +38,17 @@ pub struct Context<'a> {
     method_table_next_index: HashMap<String, usize>,
 }
 
-impl<'a> Context<'a> {
-    pub fn build_from_api(api: &'a JsonExtensionApi) -> Self {
+impl Context {
+    pub fn build_from_api(api: &JsonExtensionApi) -> Self {
         let mut ctx = Self::default();
 
         for class in api.singletons.iter() {
-            ctx.singletons.insert(class.name.as_str());
+            ctx.singletons.insert(class.name.clone());
         }
 
-        ctx.builtin_types.insert("Variant"); // not part of builtin_classes
+        ctx.builtin_types.insert("Variant".to_string()); // not part of builtin_classes
         for builtin in api.builtin_classes.iter() {
-            let ty_name = builtin.name.as_str();
+            let ty_name = builtin.name.clone();
             ctx.builtin_types.insert(ty_name);
 
             Self::populate_builtin_class_table_indices(
@@ -59,7 +59,7 @@ impl<'a> Context<'a> {
         }
 
         for structure in api.native_structures.iter() {
-            let ty_name = structure.name.as_str();
+            let ty_name = structure.name.clone();
             ctx.native_structures_types.insert(ty_name);
         }
 
@@ -328,7 +328,7 @@ impl<'a> Context<'a> {
         &self.inheritance_tree
     }
 
-    pub fn find_rust_type(&'a self, ty: &GodotTy) -> Option<&'a RustTy> {
+    pub fn find_rust_type(&self, ty: &GodotTy) -> Option<&RustTy> {
         self.cached_rust_types.get(ty)
     }
 
@@ -350,7 +350,7 @@ impl<'a> Context<'a> {
         panic!("Object (root) should always have signals")
     }
 
-    pub fn notification_constants(&'a self, class_name: &TyName) -> Option<&'a Vec<(Ident, i32)>> {
+    pub fn notification_constants(&self, class_name: &TyName) -> Option<&Vec<(Ident, i32)>> {
         self.notifications_by_class.get(class_name)
     }
 

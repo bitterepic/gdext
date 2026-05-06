@@ -18,7 +18,7 @@ use quote::{ToTokens, format_ident, quote};
 
 use crate::context::Context;
 use crate::models::api_json::{JsonBuiltinClass, JsonMethodArg, JsonMethodReturn};
-use crate::util::{ident, option_as_slice, safe_ident};
+use crate::util::{ident, safe_ident};
 use crate::{conv, special_cases};
 
 mod enums;
@@ -59,6 +59,9 @@ pub struct ApiView<'a> {
     /// Global enumerator names are unique; they carry the enum name as prefix (e.g. `MIDI_MESSAGE_NOTE_ON` for `MidiMessage`).
     /// Key is `godot_name` from [`Enumerator`], so lookup is O(1) without iterating all enums.
     global_enum_constants: HashMap<&'a str, (&'a Enum, &'a Enumerator)>,
+
+    /// Maps a class type to its enum constants by Godot name.
+    class_enum_constants: HashMap<TyName, HashMap<&'a str, (&'a Enum, &'a Enumerator)>>,
 }
 
 impl<'a> ApiView<'a> {
@@ -75,9 +78,28 @@ impl<'a> ApiView<'a> {
             })
             .collect();
 
+        let class_enum_constants = api
+            .classes
+            .iter()
+            .map(|class| {
+                let enum_constants = class
+                    .enums
+                    .iter()
+                    .flat_map(|e| {
+                        e.enumerators.iter().map(move |enumerator| {
+                            (enumerator.godot_name.as_str(), (e, enumerator))
+                        })
+                    })
+                    .collect();
+
+                (class.name().clone(), enum_constants)
+            })
+            .collect();
+
         Self {
             class_by_ty,
             global_enum_constants,
+            class_enum_constants,
         }
     }
 
@@ -100,6 +122,17 @@ impl<'a> ApiView<'a> {
         godot_name: &str,
     ) -> Option<(&'a Enum, &'a Enumerator)> {
         self.global_enum_constants.get(godot_name).copied()
+    }
+
+    pub fn find_class_enum_constant(
+        &self,
+        class: &TyName,
+        godot_name: &str,
+    ) -> Option<(&'a Enum, &'a Enumerator)> {
+        self.class_enum_constants
+            .get(class)
+            .and_then(|constants| constants.get(godot_name))
+            .copied()
     }
 }
 
@@ -642,13 +675,14 @@ impl FnParamBuilder {
     /// Builds a vector of function parameters from the provided JSON method arguments.
     pub fn build_many(
         self,
-        method_args: &Option<Vec<JsonMethodArg>>,
+        method_args: Option<Vec<JsonMethodArg>>,
         flow: FlowDirection,
         ctx: &mut Context,
     ) -> Vec<FnParam> {
-        option_as_slice(method_args)
-            .iter()
-            .map(|arg| self.build_single_impl(arg, flow, ctx))
+        method_args
+            .unwrap_or_default()
+            .into_iter()
+            .map(|arg| self.build_single_impl(&arg, flow, ctx))
             .collect()
     }
 

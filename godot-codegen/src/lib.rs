@@ -111,7 +111,7 @@ pub fn generate_sys_files(sys_gen_path: &Path, watch: &mut godot_bindings::StopW
     let mut ctx = Context::build_from_api(&json_api);
     watch.record("build_context");
 
-    let api = ExtensionApi::from_json(&json_api, &mut ctx);
+    let api = ExtensionApi::from_json(json_api, &mut ctx);
     watch.record("map_domain_models");
 
     generate_sys_central_file(&api, sys_gen_path, &mut submit_fn);
@@ -160,7 +160,7 @@ pub fn generate_core_files(core_gen_path: &Path) {
     let mut ctx = Context::build_from_api(&json_api);
     watch.record("build_context");
 
-    let api = ExtensionApi::from_json(&json_api, &mut ctx);
+    let api = ExtensionApi::from_json(json_api, &mut ctx);
     let view = ApiView::new(&api);
     watch.record("map_domain_models");
 

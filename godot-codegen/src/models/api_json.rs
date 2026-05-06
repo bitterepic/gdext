@@ -113,11 +113,11 @@ pub struct JsonBuiltinEnum {
 }
 
 impl JsonBuiltinEnum {
-    pub fn to_enum(&self) -> JsonEnum {
+    pub fn into_enum(self) -> JsonEnum {
         JsonEnum {
-            name: self.name.clone(),
+            name: self.name,
             is_bitfield: false,
-            values: self.values.clone(),
+            values: self.values,
         }
     }
 }
@@ -220,7 +220,7 @@ pub struct JsonBuiltinMethod {
     pub description: Option<String>,
 }
 
-#[derive(DeJson, Clone)]
+#[derive(DeJson)]
 pub struct JsonClassMethod {
     pub name: String,
     pub is_const: bool,
